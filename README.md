@@ -6,7 +6,7 @@ A website where Socrates, at 70, in the Athenian agora in the days before his tr
 
 ## Status
 
-Phase 1 of 4: **requirements**, awaiting validation. Nothing is built yet.
+Phase 1 of 4: **requirements** (PRD v0.4), in second validation round. Nothing is built yet.
 
 | Phase | Document | Status |
 |---|---|---|
@@ -21,3 +21,4 @@ Phase 1 of 4: **requirements**, awaiting validation. Nothing is built yet.
 2. **Voice** — speak and hear him.
 3. **Simple world** — Socrates present in a simple scene that reacts to the conversation.
 4. **Detailed world** — the same scene, upgraded to cinematic detail.
+5. **Any language** — Socrates replies in the language the visitor chooses.
