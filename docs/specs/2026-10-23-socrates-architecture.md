@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Version** | 0.2 (draft for validation; builder review incorporated — see Appendix B) |
+| **Version** | 0.3 (draft for validation; builder review and owner decisions A-6, A-7 incorporated) |
 | **Date** | 2026-10-23 |
 | **Implements** | [PRD v1.0](2026-10-22-socrates-prd.md) — stage 1 in full; forward-compatible with stages 2–5 |
 | **Product owner** | Tanvir |
@@ -26,7 +26,7 @@ Facts about the server come from a read-only inspection on 2026-10-23. Model fac
 | Live tenants on the box (medscribe-ai, medioo-web, bddrug, n8n, healthbuddy) that **must never be harmed** | Owner [D] | Socrates is fully isolated: own image, own deploy script, own data volume, no host ports, prunes only its own images; the only shared touch-point is one new Caddy site block, applied with the owner's approval |
 | Shared **Caddy** owns 80/443 and reaches apps by container name on network `n8n_edge` | Server inspection | Socrates joins `n8n_edge` and is reached as `socrates-mind:8080` |
 | Existing deploy pattern: GitHub Actions → GHCR image tagged with git sha → SSH → deploy script with health probe | Server inspection | Socrates mirrors it exactly |
-| Public GitHub repo: free Actions minutes, **public CI logs** | GitHub | Nothing secret or tenant-specific is ever printed in CI |
+| Public GitHub repo: free Actions minutes, **public CI logs**. The repo **stays public for now**, including persona prompts and evaluation material; the owner may make it private later [D] | GitHub, owner | Nothing secret or tenant-specific is ever printed in CI. Nothing in the build or deploy assumes the repo is public, so making it private later is only a settings change (private repos get 2,000 free Actions minutes a month, enough for this project) |
 | Public from day zero; testable by the owner on the live site | PRD `P9`, `NFR-11` | Continuous deployment of every green build to `https://philosopher.eliooo.org` |
 | Owner is a veteran Java developer | PRD §12 | Mind in Java; frontend kept minimal |
 | Budget: Claude API + existing EC2 only | PRD `P7` | Cheapest model first; in-process embeddings; SQLite |
@@ -284,7 +284,7 @@ Openings (`FR-1.3`) come from `corpus/openings.json`, a reviewed pool, so `sessi
 
 - **Pools** (`NFR-3`): `public`, `owner` (owner session or invite token), `eval` (separate Anthropic workspace and API key, enforced by the evaluation runner and by the workspace's own spend limit). Cost per call = usage × the price table in configuration.
 - **Safety reserve**: a small separate allowance (**$1/month**) that pays for safety screening and care-mode replies when a pool is capped. It is never blocked by the public caps.
-- **Initial caps** [P — owner sets]: public **$5/month, $0.50/day**; owner and testers **$10/month**; evaluation **$5/month**. At Haiku prices one hour-long conversation costs roughly $0.15–0.40 (§14), so the public cap allows about 15–30 hour-long conversations a month and the owner's about 30–60.
+- **Initial caps** [P — owner confirms at first public release, A-5]: public **$5/month, $0.50/day**; owner and testers **$10/month**; evaluation **$15/month** [D] (about two full runs plus one Sonnet comparison on a subset of scenarios, §14). At Haiku prices one hour-long conversation costs roughly $0.15–0.40 (§14), so the public cap allows about 15–30 hour-long conversations a month and the owner's about 30–60.
 - **Rate limits**: per device token 20 messages/minute and 300/day; per IP 120 messages/minute (loose, for shared mobile IPs). Bucket4j, in memory.
 - **Bot protection**: no model call before a human message; Cloudflare Turnstile (free) is prepared but switched off until abuse appears.
 - **Owner access**: one owner account (Argon2id password, secure session cookie) for the debug panel, invites, labelling; protected by the same rate limits.
@@ -294,7 +294,7 @@ Openings (`FR-1.3`) come from `corpus/openings.json`, a reviewed pool, so `sessi
 - HTTPS only (Caddy); HSTS; strict Content-Security-Policy (`self` only); WebSocket `Origin` must be `https://philosopher.eliooo.org`.
 - REST state changes require same-site cookies plus an `Origin` check.
 - Visitor text only ever appears in the `user` role; the notebook and prompts never go to non-owner clients.
-- **Extraction guard** (`FR-8.2`): see open item A-7. Mechanism if kept: a short hold-back buffer in the stream (about 200 characters) so a reply that starts reproducing a long run of the system prompt or notebook can be cut before it reaches the visitor and replaced by an in-character deflection.
+- **Extraction guard** (`FR-8.2`): the persona prompts are public in the repo for now (A-7), so the guard's main job is protecting the **notebook** and keeping replies in character. Mechanism: a short hold-back buffer in the stream (about 200 characters) so a reply that starts reproducing a long run of the system prompt or notebook can be cut before it reaches the visitor and replaced by an in-character deflection.
 - "Never reaches any API request" in `FR-4.3` means **the model API**: the secret word does travel, over HTTPS, in the page's own REST request to our server, and nowhere else.
 - Secrets on the box in `~/socrates/socrates.env` (mode 600), the same convention as medscribe; GitHub holds only the SSH deploy key and host; CI never prints environment values.
 
@@ -406,8 +406,8 @@ A full evaluation run (about 170 conversations of about 20 turns plus 10 runs of
 | A-3 | A free API key from another provider for the judge (e.g. Google AI Studio for Gemini) | Evaluation suite |
 | A-4 | A separate Anthropic workspace and API key for evaluation (recommended, keeps the eval pool separate) | Evaluation suite |
 | A-5 | Confirm initial budget caps (§11) | First public release |
-| A-6 | **Evaluation budget**: how many full runs and model-comparison runs per month (§14) | Development plan |
-| A-7 | **Public repo**: may the persona prompts, crisis phrase list and evaluation scenarios be public, or must they live outside the repo? | Development plan |
+| ~~A-6~~ | Evaluation budget — **resolved**: $15/month (§11) | — |
+| ~~A-7~~ | Public repo — **resolved**: stays public for now, including prompts; the owner may make it private later (§1) | — |
 
 ## Appendix A — PRD traceability
 
@@ -445,7 +445,7 @@ A full evaluation run (about 170 conversations of about 20 turns plus 10 runs of
 |---|---|---|---|
 | 1 | Safety when the normal turn cannot run | Fixed: backstop before caps; safety reserve; refusal treated as a safety signal; canned care mode without a model; `safety` validated on its own | §5, §6.7, §11 |
 | 2 | Two containers during deploy; shared SQLite; migrations | Fixed: stop-then-start (10–20 s downtime), snapshot before deploy, forward-only migrations | §9, §13.2 |
-| 3 | Evaluation spending | Owner decision | A-6 |
+| 3 | Evaluation spending | Owner decision: $15/month | §11 |
 | 4 | API keys in GitHub; smoke evaluation blocking | Fixed: eval and judge keys as GitHub secrets, production key stays on the box; deterministic checks block, AI-judged checks report | §13.2 |
 | 5 | Shared-device resume and unlocking | Fixed: profile conversations hidden until unlocked; unlock joins the current conversation; no unprompted model call; REST unlock notifies the WebSocket | §8, §10 |
 | 6 | Concession definition; notebook size | Fixed: concession = premise quote + visitor reply copied by the server; model sends notebook operations only | §6.2 |
@@ -453,4 +453,4 @@ A full evaluation run (about 170 conversations of about 20 turns plus 10 runs of
 | 8 | Retention of care-mode text | Fixed: deleted after 30 days; excluded from resume, condensation and memory | §6.5, §8, §9 |
 | 9 | Stage 2's 2-second target | Fixed: streamed plan with early speak, planning during speech, `thinks` beat; (1) built behind a flag in stage 1 | §6.2, §6.6 |
 | 10 | "Forget me" in chat; live judge flags; input moderation | Fixed: page-level confirmation; owner-only live flags, off by default; input hygiene plus the plan's safety assessment | §5, §6.2, §15 |
-| 11 | Public repo exposes prompts; extraction guard vs streaming; meaning of "API request" | Owner decision on exposure (A-7); hold-back buffer if the guard is kept; "API request" clarified as the model API | §12, A-7 |
+| 11 | Public repo exposes prompts; extraction guard vs streaming; meaning of "API request" | Owner decision: public for now, private later possible; guard kept with a hold-back buffer, protecting the notebook; "API request" clarified as the model API | §1, §12 |
