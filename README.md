@@ -6,7 +6,7 @@ A website where Socrates, at 70, in the Athenian agora in the days before his tr
 
 ## Status
 
-Phase 1 of 4: **requirements** (PRD v0.4), in second validation round. Nothing is built yet.
+Phase 1 of 4: **requirements** (PRD v0.5), awaiting final validation. Nothing is built yet.
 
 | Phase | Document | Status |
 |---|---|---|
