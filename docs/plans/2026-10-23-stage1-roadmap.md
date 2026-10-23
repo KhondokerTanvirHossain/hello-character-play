@@ -2,15 +2,15 @@
 
 | | |
 |---|---|
-| **Version** | 0.4 (two verification rounds incorporated) |
+| **Version** | 0.5 (Release 0 split into R0a and R0b) |
 | **Date** | 2026-10-23 |
 | **Implements** | [PRD v1.0](../specs/2026-10-22-socrates-prd.md), [Architecture v1.1](../specs/2026-10-23-socrates-architecture.md) |
 | **Status** | Awaiting validation |
 
 ## How stage 1 is delivered
 
-- Stage 1 ships as **nine releases: R0, R1a, R1b, R2–R7**. Every release is deployed to `https://philosopher.eliooo.org` and ends with **release notes and a user-perspective test script** in `docs/releases/` (PRD `P9`, `NFR-11`).
-- **Each release gets its own detailed implementation plan** in `docs/superpowers/plans/`, written when the release starts, so that what earlier releases and spikes taught us shapes it. Only R0's plan exists now.
+- Stage 1 ships as **ten releases: R0a, R0b, R1a, R1b, R2–R7**. Every release is deployed to `https://philosopher.eliooo.org` and ends with **release notes and a user-perspective test script** in `docs/releases/` (PRD `P9`, `NFR-11`).
+- **Each release gets its own detailed implementation plan** in `docs/superpowers/plans/`, written when the release starts, so that what earlier releases and spikes taught us shapes it. Only the R0a and R0b plans exist now.
 - **Gate between releases:** the owner runs the release's test script on the live site and approves before the next release starts.
 - **Rule: no capability ships ahead of its safety and privacy.** Whatever a release makes possible (storing text, examining people, remembering them) ships with the protections for it in the same release.
 - **Informal hour-long sessions** by the owner and spouse start at R1b and continue every release; AC-4 at R7 is the formal one, not the first.
@@ -18,20 +18,31 @@
 
 ## Releases
 
-### R0 — Walking skeleton with its protections
+### R0a — Infrastructure and a "coming soon" page
 
-**Goal:** a real, public, end-to-end Socrates, minimal but safe from the first second.
+**Goal:** prove the whole production path on the shared box with **no AI and no production key**.
 
-- Gradle multi-project with a packaged corpus; CI; hardened GHCR image; restricted, guarded deploy; one-time server set-up (owner-approved).
-- **Spike S0** (API facts) and a first **S4** footprint check.
-- Chat page → signed device cookie → WebSocket → one streamed Haiku 5.5 reply with persona v0 (which carries detection-independent safety rules).
-- **Layered, fail-safe safety, classify-first**: crisis backstop (English, Bangla, romanized Bangla) first on every message; then a Haiku classifier, sequentially, on every other message before any gate or reply — covering all FR-10.1 categories and identification with his fate, with fail-safe fallbacks; check-in follow-through; sticky care per conversation and per device with a confirmed "return to Socrates" control; canned care, check-in and follow-up replies; safety reserve with daily and monthly caps; a permanent help line on the page.
-- **Path-gated live safety smoke in CI** (eval key A-4) blocking deploys that change safety or persona material.
-- **Network isolation**: fixed container IP fenced by host firewall rules (no metadata service, no private networks, no tenant ports).
-- Budget ledger with daily and monthly caps; workspace spend limit; rate limits; `Origin` checks; trusted client IPs; one turn in flight; reconnect without loss. **No conversation storage.**
+- Gradle multi-project; CI; hardened GHCR image published by digest; restricted, detached, self-rolling-back deploy; host firewall with a self-recovering watchdog; 2 GB fixed-size data filesystem; Caddy; uptime and CPU-credit monitoring.
+- A public "coming soon" page and privacy note at `https://philosopher.eliooo.org`; `/healthz` with `degraded` signals.
+- A reboot test and a rollback drill on the live box.
 
-**Covers:** FR-1.1–1.4, FR-10 (all detection paths, sticky care, check-in, FR-10.7, FR-10.8; care text in English/Bangla plus a model-written line for other languages), FR-12.1, FR-12.2, FR-12.5, FR-13 (subset), NFR-2, NFR-3 (public pool and safety reserve), NFR-4, NFR-5, NFR-6 (partial, Architecture E-8), NFR-7 (disclosure; no text stored), NFR-10, NFR-11, NFR-12 (reserved `lang` fields), AC-5.
-**Exit:** the owner's R0 test script passes on the live site; S0 and S4 findings recorded.
+**Covers:** P9 (public from day zero), NFR-4, NFR-5, NFR-8 (logging rules), NFR-11, AC-5, Architecture §12–§13, §19 (disk and restart checks).
+**Plan:** [Release 0a](../superpowers/plans/2026-10-23-release-0a-infrastructure.md).
+**Exit:** the owner's R0a test script passes on the live site, including the reboot test and the rollback drill.
+
+### R0b — Socrates with fail-safe safety
+
+**Goal:** a real, public Socrates on the proven infrastructure, safe from his first word.
+
+- **Spike S0** (API facts).
+- Chat page → signed device cookie → WebSocket → **one actor per conversation** → one streamed Haiku 5.5 reply with persona v0.
+- **Layered, fail-safe safety**: the crisis backstop (English, Bangla, romanized Bangla) on arrival; then, in order, a Haiku safety classifier on every message before any gate or reply (all FR-10.1 categories and identification with his fate); check-in follow-through; sticky care per conversation and per device with a confirmed "return to Socrates" control; a persona care marker that turns Socrates' own step-out into care; fail closed whenever classification is unavailable; safety reserve with per-IP shares; a permanent help line.
+- Budget ledger with caps, reserve and per-IP daily shares; rate limits; `Origin` checks; trusted client IPs; reconnect without loss; in-character language notice for non-English messages. **No conversation storage.**
+- **Path-gated live safety smoke in CI** (eval key A-4) blocking deploys that change safety, persona, model or turn code.
+
+**Covers:** FR-1.1–1.4, FR-10 (all detection paths, sticky care, check-in, FR-10.7, FR-10.8), FR-12.1, FR-12.2, FR-12.5, FR-13 (subset), NFR-1 (feedback), NFR-2, NFR-3 (public pool and safety reserve), NFR-6 (partial, Architecture E-8), NFR-7 (disclosure; no text stored), NFR-10, NFR-12 (reserved `lang` fields).
+**Plan:** [Release 0b](../superpowers/plans/2026-10-23-release-0b-socrates.md).
+**Exit:** the owner's R0b test script passes on the live site; S0 findings recorded.
 
 ### R1a — Storage with its privacy, the owner's tools
 
@@ -126,7 +137,8 @@
 
 | Release | Owner action |
 |---|---|
-| R0 | A-1 DNS record; A-5 confirm caps and safety reserve; A-8 production workspace + spend limit; A-10 CPU credit mode; A-11 uptime monitor and credit alarm; A-13 approve the host firewall rules; **A-14 development workspace key** for the laptop; **A-4 eval workspace key** (moved from R2, for the CI safety smoke); **A-15 make the image package public**; review the Bangla crisis phrases, distress cues and replies; approve each one-time server step |
+| R0a | A-1 DNS record; A-10 CPU credit mode; A-11 uptime keyword monitor and credit alarm; A-13 approve the host firewall rules; A-15 make the image package public; approve each one-time server step; reboot test and rollback drill |
+| R0b | ~~A-14 development key~~ (done 2026-10-23); **A-4 eval workspace key** (CI safety smoke); A-5 confirm caps and safety reserve; A-8 production workspace + spend limit; review the persona and the Bangla crisis phrases, distress cues and replies |
 | R1a | Invite your spouse; check deletion on the live site |
 | R1b | Start informal hour-long sessions |
 | R2 | A-3 judge key; first calibration round |

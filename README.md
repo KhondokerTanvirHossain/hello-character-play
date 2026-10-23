@@ -12,7 +12,7 @@ Phase 3 of 4: **development plan**. Requirements (PRD v1.0) and architecture (v1
 |---|---|---|
 | 1. Requirements (PRD) | [docs/specs/2026-10-22-socrates-prd.md](docs/specs/2026-10-22-socrates-prd.md) | Approved (v1.0) |
 | 2. Architecture & technical design | [docs/specs/2026-10-23-socrates-architecture.md](docs/specs/2026-10-23-socrates-architecture.md) | Approved (v1.0) |
-| 3. Development plan | [roadmap](docs/plans/2026-10-23-stage1-roadmap.md) · [R0 plan](docs/superpowers/plans/2026-10-23-release-0-walking-skeleton.md) | Draft, in validation |
+| 3. Development plan | [roadmap](docs/plans/2026-10-23-stage1-roadmap.md) · [R0a plan](docs/superpowers/plans/2026-10-23-release-0a-infrastructure.md) · [R0b plan](docs/superpowers/plans/2026-10-23-release-0b-socrates.md) | Awaiting approval |
 | 4. Development | — | Not started |
 
 ## Roadmap
