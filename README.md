@@ -6,13 +6,13 @@ A website where Socrates, at 70, in the Athenian agora in the days before his tr
 
 ## Status
 
-Phase 2 of 4: **architecture & technical design**. Requirements approved (PRD v1.0). Nothing is built yet.
+Phase 3 of 4: **development plan**. Requirements (PRD v1.0) and architecture (v1.0) approved. Nothing is built yet.
 
 | Phase | Document | Status |
 |---|---|---|
 | 1. Requirements (PRD) | [docs/specs/2026-10-22-socrates-prd.md](docs/specs/2026-10-22-socrates-prd.md) | Approved (v1.0) |
-| 2. Architecture & technical design | [docs/specs/2026-10-23-socrates-architecture.md](docs/specs/2026-10-23-socrates-architecture.md) | Draft v0.6, in validation |
-| 3. Development plan | — | Not started |
+| 2. Architecture & technical design | [docs/specs/2026-10-23-socrates-architecture.md](docs/specs/2026-10-23-socrates-architecture.md) | Approved (v1.0) |
+| 3. Development plan | — | In progress |
 | 4. Development | — | Not started |
 
 ## Roadmap

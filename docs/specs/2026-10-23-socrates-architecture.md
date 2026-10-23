@@ -2,12 +2,12 @@
 
 | | |
 |---|---|
-| **Version** | 0.6 (draft for validation; third review incorporated — see Appendix D) |
+| **Version** | 1.0 (approved) |
 | **Date** | 2026-10-23 |
 | **Implements** | [PRD v1.0](2026-10-22-socrates-prd.md) — stage 1 in full; forward-compatible with stages 2–5 |
 | **Product owner** | Tanvir |
 | **Drafted by** | Claude |
-| **Status** | Awaiting validation |
+| **Status** | **Approved** by the product owner on 2026-10-23 after three review rounds |
 
 ### How to read this document
 
