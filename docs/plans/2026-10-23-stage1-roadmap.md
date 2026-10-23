@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Version** | 0.2 (plan review incorporated: safety and privacy ship with capability; R1 split) |
+| **Version** | 0.3 (plan review and multi-agent verification incorporated) |
 | **Date** | 2026-10-23 |
 | **Implements** | [PRD v1.0](../specs/2026-10-22-socrates-prd.md), [Architecture v1.1](../specs/2026-10-23-socrates-architecture.md) |
 | **Status** | Awaiting validation |
@@ -25,10 +25,12 @@
 - Gradle multi-project with a packaged corpus; CI; hardened GHCR image; restricted, guarded deploy; one-time server set-up (owner-approved).
 - **Spike S0** (API facts) and a first **S4** footprint check.
 - Chat page → signed device cookie → WebSocket → one streamed Haiku 5.5 reply with persona v0 (which carries detection-independent safety rules).
-- **Layered safety**: crisis backstop (English, Bangla, romanized Bangla) first on every message; Haiku safety classifier on every message, concurrent with buffered speech; sticky care mode; canned care and check-in replies; safety reserve.
+- **Layered, fail-safe safety**: crisis backstop (English, Bangla, romanized Bangla) first on every message; a Haiku classifier on every other message — including those stopped by a gate or a cap — covering all FR-10.1 categories and identification with his fate; check-in follow-through; sticky care per conversation and per device with a confirmed "return to Socrates" control; canned care, check-in and follow-up replies; safety reserve with daily and monthly caps; a permanent help line on the page.
+- **Path-gated live safety smoke in CI** (eval key A-4) blocking deploys that change safety or persona material.
+- **Network isolation**: fixed container IP fenced by host firewall rules (no metadata service, no private networks, no tenant ports).
 - Budget ledger with daily and monthly caps; workspace spend limit; rate limits; `Origin` checks; trusted client IPs; one turn in flight; reconnect without loss. **No conversation storage.**
 
-**Covers:** FR-1.1, FR-1.2, FR-1.4, FR-10 (backstop, classifier, sticky care, canned replies, every language), FR-13 (subset), NFR-2, NFR-3 (public pool and safety reserve), NFR-4, NFR-5, NFR-6 (partial, Architecture Appendix E), NFR-10, NFR-11, AC-5.
+**Covers:** FR-1.1–1.4, FR-10 (all detection paths, sticky care, check-in, FR-10.7, FR-10.8; care text in English/Bangla plus a model-written line for other languages), FR-12.1, FR-12.2, FR-12.5, FR-13 (subset), NFR-2, NFR-3 (public pool and safety reserve), NFR-4, NFR-5, NFR-6 (partial, Architecture E-8), NFR-7 (disclosure; no text stored), NFR-10, NFR-11, NFR-12 (reserved `lang` fields), AC-5.
 **Exit:** the owner's R0 test script passes on the live site; S0 and S4 findings recorded.
 
 ### R1a — Storage with its privacy, the owner's tools
@@ -36,14 +38,15 @@
 **Goal:** conversations are kept, safely, and the owner can see inside.
 
 - Conversation storage (SQLite) with the storage notice enforced by the server; resuming anonymous conversations.
-- **Privacy controls in the same release**: "Delete this device's conversations"; 30-day deletion of care-mode text; care-mode turns never stored in plan logs; retention jobs; `pending_task` queue with cancellation; backups and deploy snapshots with retention caps.
+- **Privacy controls in the same release**: "Delete this device's conversations"; **per-turn care-mode flags and the persisted conversation care state** (care text excluded from resume, deleted at 30 days); retention jobs; `pending_task` queue with cancellation; backups and deploy snapshots with retention caps.
+- **Shared-box checks with storage**: disk usage above 85% and restart count reflected as `degraded` on `/healthz` (the uptime monitor watches it).
 - Admin port with password: the chat client plus the **debug panel** (turn, timing, cost, cache, safety verdicts).
 - **Owner pool and invite tokens**, so the owner's and spouse's testing never uses the public budget.
 - Persona v1: convictions, behaviour rules and the convictions/answers line, modesty about his feats, anachronism and future-revelation rules, content policy, biography bible (core), misquote denylist.
 - Spike **S4** load test at realistic concurrency.
 
-**Covers:** FR-1.5, FR-4.6 (device part), FR-8, FR-12.4, NFR-3 (all pools), NFR-7, NFR-8, PRD §5.
-**Exit:** owner verifies deletion and retention on the live site; owner and spouse test via invites.
+**Covers:** FR-1.5, FR-4.6 (device part), FR-8, FR-12.3a, FR-12.4, NFR-3 (all pools), NFR-7, NFR-8, PRD §5, Architecture §19 (disk and restart checks).
+**Exit:** owner verifies deletion, retention and care-text exclusion on the live site; owner and spouse test via invites.
 
 ### R1b — The Socratic examination, with its safety routing
 
@@ -51,7 +54,7 @@
 
 - **Spikes S1, S2, S3, S5**.
 - Plan call (structured output) → validation → notebook operations (verbatim concessions, normalised quote matching) → **route precedence** (care > ambiguous > minors > language notice > normal) → speak call with beats; refusal handling.
-- **Core safety moves here from R5**: plan-based safety routing, the ambiguous check-in in the visitor's language, minors mode, identification-with-his-fate rule, care-mode flags on turns (so FR-4.5 can rely on them later).
+- **Safety routing moves into the plan**: the plan's `safety` field takes over the R0 classifier's role on the normal path (the classifier stays on gated and capped paths); the ambiguous check-in in the visitor's language; minors mode; identification-with-his-fate routing; `plan_json` reduced to the safety level for care-mode turns (§9 scrub), with a test.
 - **Route-assertion smoke test** in CI (live Haiku calls on crisis, ambiguous, minor and non-English probes; asserts the route; no judge needed), **path-gated** to changes in prompts, persona, routing, plan schema and `corpus/safety/` — blocking deploy.
 - Debug panel shows the notebook, plan and beats. Informal hour-long sessions begin.
 
@@ -105,7 +108,7 @@
 
 - Engagement tuning (FR-9): hooks, rhythm, sincere vs ironic praise, continuity across visits.
 - Condensation (configurable threshold, evaluation at about 8K), drift tests, long runs.
-- Monitoring (Architecture §19): uptime keyword, internal checks, digest; live flags (advisory).
+- Monitoring (Architecture §19), remainder: spend and cache-ratio checks, the digest; live flags (advisory).
 - Model-per-role decision from evidence (`P8`, `NFR-9`).
 
 **Covers:** FR-7, FR-9, NFR-1 tuning, Architecture §19.
@@ -123,10 +126,10 @@
 
 | Release | Owner action |
 |---|---|
-| R0 | A-1 DNS record; A-5 confirm caps and safety reserve; A-8 production workspace + spend limit; A-10 CPU credit mode; A-11 uptime monitor and credit alarm; A-13 approve the metadata-service block; **A-14 development workspace key** for the laptop; review the Bangla crisis phrases and replies; approve each one-time server step |
+| R0 | A-1 DNS record; A-5 confirm caps and safety reserve; A-8 production workspace + spend limit; A-10 CPU credit mode; A-11 uptime monitor and credit alarm; A-13 approve the host firewall rules; **A-14 development workspace key** for the laptop; **A-4 eval workspace key** (moved from R2, for the CI safety smoke); review the Bangla crisis phrases, distress cues and replies; approve each one-time server step |
 | R1a | Invite your spouse; check deletion on the live site |
 | R1b | Start informal hour-long sessions |
-| R2 | A-3 judge key; A-4 eval workspace and key ($15/month limit); first calibration round |
+| R2 | A-3 judge key; first calibration round |
 | R3 | Spot-check passage tags |
 | R4 | Test being remembered on two devices |
 | R7 | The one-hour test |
