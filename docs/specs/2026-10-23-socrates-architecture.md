@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Version** | 0.3 (draft for validation; builder review and owner decisions A-6, A-7 incorporated) |
+| **Version** | 0.4 (draft for validation; external review of v0.2 incorporated — see Appendix C) |
 | **Date** | 2026-10-23 |
 | **Implements** | [PRD v1.0](2026-10-22-socrates-prd.md) — stage 1 in full; forward-compatible with stages 2–5 |
 | **Product owner** | Tanvir |
@@ -24,12 +24,14 @@ Facts about the server come from a read-only inspection on 2026-10-23. Model fac
 | Shared **t3.medium** (2 vCPU, 3.7 GB RAM, about 1.4 GB free, **no swap**), 20 GB disk with about 4.9 GB free | Server inspection | One small container with a **hard memory limit**; no extra database server; strict disk hygiene |
 | **More capacity is available on request**: the owner will add memory or move Socrates to another EC2 instance if needed | Owner [D] | Memory limits protect the other tenants, not a ceiling on the product. The deployment is **portable**: the instance, Docker network, and reverse-proxy wiring are configuration, so moving to a new instance means a new target, not a redesign |
 | Live tenants on the box (medscribe-ai, medioo-web, bddrug, n8n, healthbuddy) that **must never be harmed** | Owner [D] | Socrates is fully isolated: own image, own deploy script, own data volume, no host ports, prunes only its own images; the only shared touch-point is one new Caddy site block, applied with the owner's approval |
-| Shared **Caddy** owns 80/443 and reaches apps by container name on network `n8n_edge` | Server inspection | Socrates joins `n8n_edge` and is reached as `socrates-mind:8080` |
+| Shared **Caddy** owns 80/443 and reaches the other apps by container name on network `n8n_edge` | Server inspection | Caddy is also attached to Socrates' own network `socrates_edge` (AD-18) and reaches it as `socrates-mind:8080` |
 | Existing deploy pattern: GitHub Actions → GHCR image tagged with git sha → SSH → deploy script with health probe | Server inspection | Socrates mirrors it exactly |
 | Public GitHub repo: free Actions minutes, **public CI logs**. The repo **stays public for now**, including persona prompts and evaluation material; the owner may make it private later [D] | GitHub, owner | Nothing secret or tenant-specific is ever printed in CI. Nothing in the build or deploy assumes the repo is public, so making it private later is only a settings change (private repos get 2,000 free Actions minutes a month, enough for this project) |
 | Public from day zero; testable by the owner on the live site | PRD `P9`, `NFR-11` | Continuous deployment of every green build to `https://philosopher.eliooo.org` |
+| The box is a **burstable t3** instance (CPU credits) | Server inspection | Socrates gets a **CPU limit**; heavy CPU work (embeddings, frequent JVM warm-ups) is avoided; the credit balance is monitored (§19) |
+| Socrates is a **public LLM app** next to tenants holding health data and credentials | Review | Socrates is **network-isolated** from them (AD-18); CI can only run one fixed deploy command (§13.2) |
 | Owner is a veteran Java developer | PRD §12 | Mind in Java; frontend kept minimal |
-| Budget: Claude API + existing EC2 only | PRD `P7` | Cheapest model first; in-process embeddings; SQLite |
+| Budget: Claude API + existing EC2 only | PRD `P7` | Cheapest model first; in-process BM25 retrieval; SQLite |
 
 ## 2. System overview
 
@@ -37,15 +39,16 @@ Facts about the server come from a read-only inspection on 2026-10-23. Model fac
  Visitor's browser                         Shared EC2 box (t3.medium)
  ┌──────────────────────┐        ┌─────────────────────────────────────────────────────────────┐
  │ Chat client (TS)     │ HTTPS  │  Caddy (shared, n8n-caddy-1)                                │
- │ - transcript, input  │◄──────►│   philosopher.eliooo.org ──► socrates-mind:8080             │
+ │ - transcript, input  │◄──────►│   philosopher.eliooo.org ──► socrates-mind:8080 (net: socrates_edge) │
  │ - memory controls    │  WSS   │                                                             │
  │ - debug panel (owner)│        │  ┌───────────────────── socrates-mind (one container) ───┐  │
- └──────────────────────┘        │  │ Spring Boot (Java 21, virtual threads), mem ≤ 640 MB   │  │
+ └──────────────────────┘        │  │ Spring Boot (Java 25, virtual threads), ≤640 MB, ≤1 CPU │  │
                                  │  │  ├─ static chat client                                 │  │
                                  │  │  ├─ WebSocket /ws  (conversation protocol v1)          │  │
-                                 │  │  ├─ REST /api/memory/*, /admin/*, /healthz             │  │
+                                 │  │  ├─ REST /api/memory/*, /healthz                       │  │
+                                 │  │  ├─ admin port 8081 (127.0.0.1 only, via SSH tunnel)   │  │
                                  │  │  ├─ mind-core: turn pipeline, notebook, safety,        │  │
-                                 │  │  │   retrieval (in-process embeddings), condensation  │  │
+                                 │  │  │   retrieval (in-process BM25), condensation        │  │
                                  │  │  ├─ budget ledger, rate limits                         │  │
                                  │  │  └─ SQLite (volume socrates_data)                      │  │
                                  │  └────────────────────────────────┬───────────────────────┘  │
@@ -62,23 +65,26 @@ Facts about the server come from a read-only inspection on 2026-10-23. Model fac
 
 | # | Decision | Rationale | Tag |
 |---|---|---|---|
-| AD-1 | **Java 21 LTS, Spring Boot 4.x** (latest GA at build time), **virtual threads** on | Owner's language; long streaming conversations are I/O-bound; virtual threads keep thread memory low | [P] |
+| AD-1 | **Java 25 LTS, Spring Boot 4.x** (latest GA at build time), **virtual threads** on | Owner's language; long streaming conversations are I/O-bound; virtual threads keep thread memory low; Java 25 no longer pins virtual threads on `synchronized` (JEP 491) | [P] |
 | AD-2 | **One container, one process** serves the client, the WebSocket, the REST API, and the mind | Memory: every extra container costs tens to hundreds of MB on a box with about 1.4 GB free | [P] |
 | AD-3 | **WebSocket** (`/ws`, plain JSON text frames, no STOMP) for conversation; **REST** for memory, admin, health | Bidirectional and streaming; carries audio in stage 2 without a new transport; memory secrets stay off the conversation channel (`FR-4.3`) | [P] |
-| AD-4 | **SQLite** (WAL mode) in a Docker volume; schema migrations with Flyway | No extra server or memory; single instance; trivially backed up. Never touch the box's existing Postgres | [P] |
+| AD-4 | **SQLite** (WAL mode) in a Docker volume; schema migrations with Flyway; **all database access on a small pool of platform threads with a single writer connection** and `busy_timeout` | No extra server or memory; single instance; trivially backed up. Never touch the box's existing Postgres. The SQLite driver uses native calls, which pin virtual threads to their only 2 carriers; a platform-thread pool keeps streaming unaffected | [P] |
 | AD-5 | **Official Anthropic Java SDK** (`com.anthropic:anthropic-java`, version pinned at build) behind an internal `LanguageModel` interface; model per role in config | `NFR-9`: model and provider swappable; SDK, not raw HTTP | [P] |
 | AD-6 | **Start with `claude-haiku-5-5` for every role** (planner, speaker, condenser, simulated visitor) | Owner decision [D]; upgrade per role by evaluation evidence (`P8`) | [D] |
 | AD-7 | **Two calls per turn: Plan (structured JSON), then Speak (streamed text)** | The notebook is validated *before* Socrates speaks (`FR-3.3`); safety and language are decided before any reply (`FR-10.7`); the speaker gets a clear move to execute | [P] |
 | AD-8 | **History is stored and replayed as plain text turns**; thinking blocks are never replayed | Avoids the "preserved thinking" history-editing check (editing earlier turns invalidates replayed thinking and can return 400 on new accounts), which our own condensation (AD-9) must be free to do | [P] |
 | AD-9 | **Own condensation, not server-side compaction** | Concessions and theses must stay verbatim (`FR-3.2`, `FR-7.2`); server compaction summarises arbitrarily | [P] |
 | AD-10 | **Every request stays under 100K input tokens** (condensation triggers at about 70K) | Haiku 5.5 costs $0.10 / $0.50 per MTok up to 100K tokens and $0.50 / $2.50 above: a 5× cliff | [P] |
-| AD-11 | **In-process retrieval**: a quantised all-MiniLM-L6-v2 embedding model (ONNX, via LangChain4j) and an in-memory vector index built at **build time** and shipped in the image | No external service or cost; about 60 MB of memory; no start-up indexing | [P] |
+| AD-11 | **In-process retrieval with Lucene BM25** (pure Java) over the tagged passages, combined with **topic labels chosen by the plan**; index built at **build time** and shipped in the image. **Embeddings are added only if evaluation shows retrieval misses** | The corpus is small (about 1–2K passages); BM25 needs no native runtime, little memory and little CPU, and keeps the image small. (This supersedes the PRD's proposed embedding model, §12 [P]) | [P] |
 | AD-12 | **Corpus is tagged per passage offline** and versioned in the repo | `§5.3` dating rule and always-excluded passages are enforced by filters, not by hoping the model obeys | [P] |
 | AD-13 | **Secret word over REST**, hashed with **Argon2id**; the request body for that endpoint is excluded from all logging | `FR-4.3`: never reaches the model, transcript, notebook, logs | [P] |
 | AD-14 | **Budget ledger in SQLite** with three pools; checked before every model call | `NFR-3` | [P] |
 | AD-15 | **Evaluation runs off the box** (GitHub Actions on manual trigger, or the owner's laptop) | Memory and safety of the shared box; evaluation spend separated | [P] |
 | AD-16 | **Chat client in plain TypeScript + Vite**, no UI framework; built into the server's static resources | Smallest possible thing that works; stage 3's world is a separate client on the same protocol | [P] |
 | AD-17 | **Deployment mirrors medscribe's pattern** but is entirely separate: `ghcr.io/khondokertanvirhossain/hello-character-play/socrates-mind:<sha>`, `~/socrates/deploy-socrates.sh` | Proven on this box; nothing shared except Caddy | [P] |
+| AD-18 | **Own Docker network `socrates_edge`**, shared only by Caddy and `socrates-mind`; Socrates is **not** on `n8n_edge` | A compromised Socrates (or a malicious image) cannot reach n8n, medscribe or bddrug directly | [P] |
+| AD-19 | **Admin and debug on a separate port (8081) bound to the box's 127.0.0.1 only**, reached by the owner through an SSH tunnel; never routed by Caddy | The panel can read every visitor's transcript; it must not be on the public internet behind a single password | [P] |
+| AD-20 | **CI can run exactly one command on the box**: a deploy key restricted in `authorized_keys` to `deploy-socrates.sh`, which accepts only a 40-character hex sha | SSH plus Docker is effectively root on a box holding other tenants' health data and credentials; a compromised Action or dependency in a public repo must not inherit that | [P] |
 
 ## 4. Components
 
@@ -87,7 +93,7 @@ Gradle multi-project build (Kotlin DSL) [P]:
 | Module | What it is | Depends on |
 |---|---|---|
 | `protocol/` | The protocol v1 JSON Schema (single source of truth), generated TypeScript types, and Java records verified against the schema by a test | — |
-| `corpus/` | Source texts with licence notes, passage files with tags and Stephanus/section references, the biography bible, the misquote denylist, and a build tool that produces the embedding index | — |
+| `corpus/` | Source texts with licence notes, passage files with tags and Stephanus/section references, the biography bible, the misquote denylist, and a build tool that produces the search index | — |
 | `mind-core/` | Pure Java, no Spring: persona and prompt assembly, the turn pipeline, notebook, safety routing, retrieval, condensation, memory extraction, beat parsing, `LanguageModel` interface and its Anthropic implementation | `protocol`, `corpus` artefacts |
 | `mind-server/` | Spring Boot application: WebSocket handler, REST endpoints, persistence (SQLite), identity, budget ledger, rate limiting, owner authentication, retention jobs, static client | `mind-core` |
 | `client-chat/` | TypeScript chat page and debug panel | `protocol` (generated types) |
@@ -100,9 +106,10 @@ For every visitor message:
 
 | Step | What happens | Notes |
 |---|---|---|
+| 0 | **One turn in flight per conversation**: a second message while a turn runs is queued (or rejected with a notice); a resent message with an already-seen `clientMsgId` is ignored | Prevents two pipelines racing on one notebook and one ledger (double send, two tabs, reconnect) |
 | 1 | Receive `visitor.message` on the WebSocket | **Input hygiene** (`NFR-6`): max 2,000 characters, control characters stripped, flood detection; empty or oversized messages get a notice |
 | 2 | **Safety screen first**: the deterministic multilingual crisis backstop (§6.4) runs on every message **before** caps and rate limits | A hit goes straight to care mode (§6.7), whatever the caps say |
-| 3 | **Rate limit** (per device token, loose per-IP backstop) and **budget check** for the caller's pool | On a cap: in-character notice (`NFR-3`), no model call. The safety reserve (§11) is never blocked by caps |
+| 3 | **Rate limit** (§11) and **budget reservation**: the estimated cost of the turn is reserved in the ledger before any call and settled from actual usage afterwards | On a cap: in-character notice (`NFR-3`), no model call. The safety reserve (§11) is never blocked by caps |
 | 3a | Emit `socrates.thinking` | Within 1 s (`NFR-1`) |
 | 4 | **Retrieve** up to 6 passages for (visitor message + current thesis), filtered by tag: *argument*, and *dated life event* dated before spring 399; never *situation-bound*, *dramatic frame*, or *always-excluded* | In-process, about 10–20 ms |
 | 5 | **Plan call** (Haiku 5.5, adaptive thinking, effort `medium`, structured output against the plan schema) | See §6.2 for its output |
@@ -119,8 +126,10 @@ For every visitor message:
 |---|---|
 | Caps or rate limit reached | Backstop already ran (step 2). No hit: in-character cap notice. Hit: care mode, paid from the safety reserve |
 | Plan invalid twice | Safety from the separately validated `safety` field; if unparsable, treated as `ambiguous` |
-| Model refusal (`stop_reason: "refusal"`) on the plan or speak call | Treated as a **possible safety signal**: the canned care-mode reply (§6.7), not an in-character deflection |
+| Model refusal (`stop_reason: "refusal"`) on the plan or speak call | Routed to the **ambiguous** path (a gentle, plain check-in), **unless** the backstop or a parsed `safety` field says crisis, in which case care mode. Refusals are mostly triggered by jailbreak attempts and edgy philosophy, so sending helplines to every refusal would mislead and could be triggered on purpose |
 | Anthropic API down or timing out | Backstop hit: canned care-mode reply. Otherwise: in-character "let us pause a moment" notice with retry (`NFR-10`) |
+| Visitor disconnects mid-stream | The turn is completed and stored server-side; cost is settled from the usage reported, or estimated from streamed tokens if the stream was aborted |
+| Deploy (shutdown) during a turn | Graceful shutdown waits up to 30 s for in-flight turns; asynchronous work (memory writes, notebook repair, condensation) is kept in a durable queue (`pending_task`) and resumed on start |
 
 **Latency estimate** [P, verified by spike S5]: Plan call about 1.5–3 s (short structured output plus thinking), Speak first token about 0.5–1 s after → first visible text about **2.5–4 s p50**, within `NFR-1` (4 s p50, 8 s p95). If the plan call is too slow, the first lever is a lower effort on the plan; the second is moving the plan to Sonnet 5.5, which is faster per token but costs more.
 
@@ -146,7 +155,7 @@ Each call type has its own **stable, cached prefix** and a **volatile tail**:
   (Speak only) the plan's chosen move and the route
 ```
 
-- The context packet is sent as a **mid-conversation system message** (supported on Haiku 5.5), ideally turn-scoped (`clear_at: "next_user_message"`, beta) so it costs nothing on later turns and never disturbs the cached history. **Spike S2** confirms this on Haiku 5.5; the fallback is a text block appended to the latest user turn.
+- The context packet is sent as a **mid-conversation system message** (supported on Haiku 5.5), ideally turn-scoped (`clear_at: "next_user_message"`, beta) so it costs nothing on later turns and never disturbs the cached history. **Spike S2** confirms this on Haiku 5.5. **Fallback**: the packet is appended as a text block to the latest user turn **for that request only** — it is never stored in history, and on the next turn that user turn is replayed without it; the automatic cache breakpoint therefore lands on the previous turn, and only the latest user turn plus the packet are uncached.
 - **5-minute cache TTL**: conversation turns are seconds to minutes apart, so reads keep the cache warm. A visitor who pauses longer pays one cache rewrite, which costs very little at Haiku prices.
 - Prompts contain **no timestamps, IDs or other per-request bytes** in the stable parts (they silently break caching). Cache hits are verified from `usage.cache_read_input_tokens` on every turn and shown in the debug panel.
 - **No sampling parameters** (`temperature` and similar are rejected by the API since 2026-10-21) and **no assistant prefill** (rejected on current models). Output shape is controlled by structured outputs (plan) and instructions (speak).
@@ -176,7 +185,7 @@ The plan call returns one JSON object [P]. **Field order is deliberate** — saf
 ```
 
 - **The notebook is held by the server**; the model sends only **changes** (`notebookOps`), so plan output stays small and roughly constant over an hour. The server applies the operations and sends the full current notebook in the next context packet.
-- **A concession** (`FR-3.2`) is the pair *(Socrates' premise, the visitor's reply)*. `premiseQuote` must be an **exact substring** of Socrates' turn `socratesTurn` (checked by the server); the visitor's reply is **copied verbatim by the server** from turn `visitorTurn`. A bare "Yes" is therefore always stored with the premise it agreed to. Theses work the same way: the server copies the visitor's own words.
+- **A concession** (`FR-3.2`) is the pair *(Socrates' premise, the visitor's reply)*. `premiseQuote` is matched against Socrates' turn `socratesTurn` **after normalising** quotes, dashes and whitespace (with a small fuzzy tolerance), and the server then stores the **exact span** from the transcript; the visitor's reply is **copied verbatim by the server** from turn `visitorTurn`. **Every turn in the history the model sees carries its turn number** (e.g. `[T14 Visitor]`), so it can cite them. A bare "Yes" is therefore always stored with the premise it agreed to. Theses work the same way: the server copies the visitor's own words.
 - **`requests.forgetMe`**: when the visitor asks Socrates to forget them (`FR-4.6`), the server shows the page-level "Forget me" confirmation (consent and deletion are always page-level controls, like `FR-4.2`); Socrates acknowledges in character. Nothing is deleted from chat text alone.
 
 ### 6.3 Beats in the spoken text
@@ -193,7 +202,7 @@ The speaker writes beats inline, for example `⟦mood=ironic action=leans_in ten
 | Ambiguous | `safety.level = ambiguous` | Normal persona, but the move is a gentle, plain question whether the visitor speaks of themselves (`FR-10.2`) |
 | Minors mode | `minorCue` | Normal persona with stricter rules; memory not offered; sensitive topics avoided (`§5.7`) |
 
-A **deterministic backstop** runs alongside the plan: a short multilingual list of unambiguous crisis phrases (English and Bangla first) that forces care mode even if the plan missed it [P].
+A **deterministic backstop** runs alongside the plan: a short multilingual list of unambiguous crisis phrases — **English, Bangla in Bengali script, and romanized Bangla** (Bangla typed in Latin letters, often mixed with English) first — that forces care mode even if the plan missed it [P]. The plan's `input` reports `script` and `mixed` as well as `language`, so romanized or mixed Bangla is not mistaken for English.
 
 ### 6.5 Condensation
 
@@ -207,18 +216,18 @@ When the next request would exceed about **70K input tokens**, the condenser (Ha
 2. **Planning while the visitor speaks**: with live speech recognition, a provisional plan starts on a pause in the visitor's speech and is discarded if they continue.
 3. **The `thinks` beat**: the world client renders Socrates' absorbed stillness during the remaining gap, so a pause reads as character rather than lag.
 
-Stage 1 ships with (1) behind a feature flag, off, and measured in spike S5.
+Stage 1 does **not** build the streamed path: keeping the plan's field order (safety, move, then notebook changes) is enough to add it in stage 2 without rework (`P5`).
 
 ### 6.7 Care mode without a model
 
-A **canned care-mode reply** exists for when no model call is possible (API down, refusal, caps with a backstop hit): a short, plain, caring message plus help resources, stored in `corpus/safety/` in **English and Bangla** to start. The language is chosen from the script of the visitor's message (Bengali script → Bangla; otherwise English), with the international directory always included. More languages are added as material is reviewed.
+A **canned care-mode reply** exists for when no model call is possible (API down, refusal, caps with a backstop hit): a short, plain, caring message plus help resources, stored in `corpus/safety/` in **English and Bangla** to start. The language is chosen from the visitor's message: Bengali script → Bangla; **romanized or mixed Bangla, or uncertain → a bilingual Bangla + English reply**; otherwise English. The international directory is always included. More languages are added as material is reviewed.
 
 ## 7. Retrieval and the corpus
 
 - **Texts** [P]: public-domain English translations. Plato from Project Gutenberg (Jowett) and, where a clean digital text exists, pre-1931 Loeb translations (Fowler, Lamb); Xenophon's *Memorabilia* (Marchant, Loeb 1923) for biography. Each source file records its licence and origin. Perseus texts are CC BY-SA and would need attribution and share-alike for the derived corpus; preferring Gutenberg and Wikisource avoids that.
 - **Passages**: about 150–300 words each, with Stephanus (Plato) or book/chapter/section (Xenophon) references.
 - **Tagging** (`§5.3`): `argument`, `life_event` (with a date), `situation_bound`, `dramatic_frame`, `always_excluded`, plus topic labels. Done **once, offline**, by Claude with the tagging rules, then **spot-checked by a human**; the always-excluded and situation-bound lists in the PRD are checked exhaustively.
-- **Index**: embeddings computed at build time and stored as a binary file in the image (a few MB); loaded into memory at start-up.
+- **Index**: a Lucene BM25 index built at build time and shipped in the image (a few MB), loaded at start-up; the plan's topic labels narrow and boost results. Embeddings are a later option (AD-11).
 - **Biography bible and denylist**: versioned files in `corpus/`, used both in the persona prompt and by the evaluation checkers.
 
 ## 8. Identity, memory and privacy
@@ -227,13 +236,13 @@ A **canned care-mode reply** exists for when no model call is possible (API down
 |---|---|
 | **Device token** | 256-bit random value set as a cookie (`Secure`, `HttpOnly`, `SameSite=Strict`, 13-month expiry); only its SHA-256 hash is stored |
 | **Consent** | Page-level "Remember me" control → `POST /api/memory/consent` |
-| **Secret word** | Page-level field → `POST /api/memory/secret` (set) or `/api/memory/unlock`; Argon2id (OWASP parameters, about 19 MB, 2 iterations); never on the WebSocket, never logged (endpoint excluded from request logging), never in the model's context |
+| **Secret word** | Page-level field → `POST /api/memory/secret` (set) or `/api/memory/unlock`; Argon2id (OWASP parameters, about 19 MB, 2 iterations), **at most 2 hashes computed at once** (a semaphore, so parallel requests cannot exhaust the heap); never on the WebSocket, never logged (endpoint excluded from request logging), never in the model's context. The page nudges visitors toward **two words** (at least 8 characters) |
 | **Profiles** | Several per device, each with its own secret word and memory |
 | **Resuming on a shared device** | A conversation **bound to a profile** cannot be resumed, listed, or shown until that profile is unlocked in the current session. Only **anonymous** conversations (no profile) are resumable by device alone (`FR-1.5`) |
-| **Unlocking mid-conversation** | The current anonymous conversation joins the unlocked profile (a page notice says so). The REST unlock notifies the open WebSocket session of the same device (server-side session registry), which receives `memory.status`. **Socrates does not speak on his own**: the page shows a pre-written recognition line (no model call), and his next reply, triggered by the visitor's next message, uses the memory (`FR-1.3`, `FR-4.4`) |
+| **Unlocking mid-conversation** | The unlock request carries the **`conversationId` and a per-session nonce** (issued in `session.ready`); **only that one session and conversation** join the profile — another tab or person on the same device is unaffected. A page notice says so; that session receives `memory.status`. **Socrates does not speak on his own**: the page shows a pre-written recognition line (no model call), and his next reply, triggered by the visitor's next message, uses the memory (`FR-1.3`, `FR-4.4`) |
 | **Locking** | Closing the page, starting a new conversation, or 30 minutes idle locks the profile again |
 | **Brute force** | 5 failed unlocks per device per 15 minutes; a forgotten word means starting fresh (`FR-4.8`) |
-| **What is stored** | Memory items by kind (`name`, `occupation`, `thesis`, `thread`, `term`); sensitive beliefs only as examined theses (`FR-4.5`); nothing from care-mode turns |
+| **What is stored** | Memory items by kind (`name`, `occupation`, `thesis`, `thread`, `term`); sensitive beliefs only as examined theses (`FR-4.5`); nothing from care-mode turns. If a **minor cue** appears on an already-consented profile, **memory writes are frozen** for that profile |
 | **Forget me** | `DELETE /api/memory` removes the profile, its memory, and its conversations |
 | **Retention jobs** (nightly) | Profiles and conversations idle 12 months: deleted. Operational fields of turn logs (notebook snapshot, sources, latency): 90 days. Safety events: 30 days, minimal fields. **Text of care-mode turns** (both sides): deleted after 30 days and replaced by a placeholder; never part of resumed history, condensation, or memory |
 
@@ -251,12 +260,15 @@ A **canned care-mode reply** exists for when no model call is possible (API down
 | `invite` | id, token_hash, label, created_at, revoked_at |
 | `owner_session` | id, created_at, expires_at |
 | `safety_event` (30-day) | id, conversation_id, turn_idx, level, created_at |
+| `pending_task` | id, kind (memory_write, notebook_repair, condense, redact), payload_ref, created_at, attempts — the durable queue for asynchronous work |
 
 Calibration labels and failure reviews live with the evaluation runner, not in production (§15).
 
-Backups [P]: nightly `VACUUM INTO` a dated file in the volume, keeping 7 (the database is expected to stay in the tens of MB).
+Backups [P]: nightly `VACUUM INTO` a dated file in the volume, **keeping 3**, and only if at least 1 GB is free; **deploy snapshots: keeping the last 3**. Backups live on the same disk, so they protect against bad deploys and corruption, **not** against losing the disk; an off-box copy is open item A-9. Deleted data (forget me, care-mode text) can persist in these copies for up to 3 days or 3 deploys, which the privacy notice states.
 
-**Migrations**: the deploy is stop-then-start (§13.2), so only one version ever touches the database. Every migration is forward-only and is applied by Flyway at start-up; the deploy script takes a `VACUUM INTO` snapshot first, so a rollback restores the snapshot taken before the failed version.
+**Scrubbing**: for care-mode turns, `turn_ops.plan_json` is reduced to the safety level only (signals and memory candidates can quote the visitor).
+
+**Migrations**: the deploy is stop-then-start (§13.2), so only one version ever touches the database. Migrations are forward-only, applied by Flyway at start-up; Flyway is configured to **refuse to start** against a schema newer than the code knows. **Rollback is defined as restoring the snapshot taken before the deploy being rolled back, then starting the older image** — conversations from the interval are lost, explicitly. Where a change can be made backward-compatible (expand, then contract in a later release), it is, so most rollbacks lose nothing.
 
 ## 10. Protocol v1
 
@@ -264,10 +276,11 @@ Every frame is JSON: `{"v": 1, "type": "...", ...}`. Within v1, changes are **ad
 
 | Direction | Type | Payload |
 |---|---|---|
-| C→S | `hello` | `{ protocol: 1, resumeConversationId? }` (device token travels in the cookie) |
+| C→S | `hello` | `{ protocol: 1, resumeConversationId?, lastTurnId? }` (device token travels in the cookie) |
+| C↔S | ping / pong | WebSocket ping every **25 s** so mobile networks do not drop idle connections; the client reconnects and resumes from `lastTurnId` |
 | C→S | `visitor.message` | `{ clientMsgId, text }` |
 | C→S | `conversation.new` | `{}` |
-| S→C | `session.ready` | `{ conversationId, opening, remembered: false }` |
+| S→C | `session.ready` | `{ conversationId, sessionNonce, opening, remembered: false }` |
 | S→C | `socrates.thinking` | `{ turnId }` |
 | S→C | `socrates.delta` | `{ turnId, text }` |
 | S→C | `socrates.beat` | `{ turnId, at, mood?, action?, tension? }` |
@@ -285,18 +298,24 @@ Openings (`FR-1.3`) come from `corpus/openings.json`, a reviewed pool, so `sessi
 - **Pools** (`NFR-3`): `public`, `owner` (owner session or invite token), `eval` (separate Anthropic workspace and API key, enforced by the evaluation runner and by the workspace's own spend limit). Cost per call = usage × the price table in configuration.
 - **Safety reserve**: a small separate allowance (**$1/month**) that pays for safety screening and care-mode replies when a pool is capped. It is never blocked by the public caps.
 - **Initial caps** [P — owner confirms at first public release, A-5]: public **$5/month, $0.50/day**; owner and testers **$10/month**; evaluation **$15/month** [D] (about two full runs plus one Sonnet comparison on a subset of scenarios, §14). At Haiku prices one hour-long conversation costs roughly $0.15–0.40 (§14), so the public cap allows about 15–30 hour-long conversations a month and the owner's about 30–60.
-- **Rate limits**: per device token 20 messages/minute and 300/day; per IP 120 messages/minute (loose, for shared mobile IPs). Bucket4j, in memory.
-- **Bot protection**: no model call before a human message; Cloudflare Turnstile (free) is prepared but switched off until abuse appears.
-- **Owner access**: one owner account (Argon2id password, secure session cookie) for the debug panel, invites, labelling; protected by the same rate limits.
+- **Real client IPs**: behind Caddy every request comes from Caddy's container address. The server trusts `X-Forwarded-For` / `X-Forwarded-Proto` **only from Caddy's address on `socrates_edge`**, so per-IP limits, `Secure` cookies and `Origin` checks see the real values and the headers cannot be spoofed.
+- **Rate limits**: per device token 20 messages/minute and 300/day; per IP 60 messages/minute and **400/day**; **at most 5 new device tokens per IP per hour** (a fresh cookie must not mean fresh limits). Bucket4j with buckets in Caffeine caches (size-capped, with expiry). Limits reset on deploy; the persistent ledger still holds the caps.
+- **Bot protection**: no model call before a human message; **Cloudflare Turnstile (free) is wired in from the start** and switches on automatically when traffic looks abnormal (e.g. new devices per hour or public spend per hour above a threshold).
+- **Hard backstop**: the **production** Anthropic key lives in its own workspace with a **workspace spend limit** slightly above the sum of the app's caps, so a bug in the ledger cannot run up a bill (owner action A-8).
+- **Owner access**: the owner's debug panel, invites and admin functions live on the **admin port** (AD-19), reached through an SSH tunnel (`ssh -L 8081:127.0.0.1:8081 …`); no admin login page is exposed publicly. The owner tests the visitor experience on the public site like anyone else, and the owner pool applies to sessions opened through the tunnel or with an invite token.
 
 ## 12. Security
 
-- HTTPS only (Caddy); HSTS; strict Content-Security-Policy (`self` only); WebSocket `Origin` must be `https://philosopher.eliooo.org`.
+- HTTPS only (Caddy); **HSTS set once, in Caddy**; strict Content-Security-Policy (`self` only, set by the app); WebSocket `Origin` must be `https://philosopher.eliooo.org`.
 - REST state changes require same-site cookies plus an `Origin` check.
 - Visitor text only ever appears in the `user` role; the notebook and prompts never go to non-owner clients.
-- **Extraction guard** (`FR-8.2`): the persona prompts are public in the repo for now (A-7), so the guard's main job is protecting the **notebook** and keeping replies in character. Mechanism: a short hold-back buffer in the stream (about 200 characters) so a reply that starts reproducing a long run of the system prompt or notebook can be cut before it reaches the visitor and replaced by an in-character deflection.
+- **No extraction guard in the stream** (`FR-8.2`): a hold-back buffer would cost latency, and the prompts are public in the repo for now. Not revealing instructions or the notebook is handled by the persona instructions and tested by the character-breaker persona in evaluation.
+- **Logs never contain message text** (visitor or Socrates), only IDs, sizes and metrics. **Heap dumps are disabled.**
+- `/healthz` on the public port returns only `{ status }`; the build sha and details are on the admin port and to the deploy script.
+- **Invite tokens** are exchanged for a cookie on first use and stripped from the URL, so they never sit in logs or referrers.
 - "Never reaches any API request" in `FR-4.3` means **the model API**: the secret word does travel, over HTTPS, in the page's own REST request to our server, and nowhere else.
-- Secrets on the box in `~/socrates/socrates.env` (mode 600), the same convention as medscribe; GitHub holds only the SSH deploy key and host; CI never prints environment values.
+- Secrets on the box in `~/socrates/socrates.env` (mode 600), the same convention as medscribe; CI never prints environment values.
+- **Privacy notice** names Anthropic as the processor of conversation text and states backup retention (§9).
 
 ## 13. Deployment
 
@@ -304,34 +323,39 @@ Openings (`FR-1.3`) come from `corpus/openings.json`, a reviewed pool, so `sessi
 
 | Setting | Value |
 |---|---|
-| Base image | Eclipse Temurin 21 JRE (Ubuntu-based, needed for the ONNX runtime's glibc) |
-| Memory | `--memory=640m --memory-swap=640m` on the shared box (protects the other tenants); JVM `-Xmx300m`, `-XX:MaxMetaspaceSize=128m`; the embedding model uses native memory. All values are deploy-time configuration, raised if the owner adds memory or moves the service |
-| Network | `n8n_edge` only; **no host ports published** |
+| Base image | Eclipse Temurin 25 JRE (minimal variant; final choice after measuring image size in S4) |
+| CPU | `--cpus=1.0 --cpu-shares=512`: at most one of the two vCPUs, and lower priority than the tenants under contention (protects the burstable CPU credits) |
+| Memory | `--memory=640m --memory-swap=640m` on the shared box (protects the other tenants); JVM `-Xmx300m`, `-XX:MaxMetaspaceSize=128m`. All values are deploy-time configuration, raised if the owner adds memory or moves the service |
+| Network | `socrates_edge` only (AD-18); the public port 8080 is reachable only from Caddy; the admin port 8081 is published on **127.0.0.1 only** (AD-19) |
 | Data | Docker volume `socrates_data` → `/data` (SQLite and backups) |
 | Logs | `json-file` driver, `max-size=10m`, `max-file=3` (30 MB ceiling on a nearly full disk) |
-| Restart | `unless-stopped` |
-| Health | `GET /healthz` → `{ service: "socrates-mind", sha, build }` |
+| Restart | `unless-stopped`; stopped with `docker stop -t 30` and Spring graceful shutdown |
+| JVM | heap dumps off; container-aware memory settings |
+| Health | public `GET /healthz` → `{ status }`; admin `GET /healthz/detail` → `{ service, sha, build, disk, ledger, cache }` |
 
 ### 13.2 Pipeline
 
-1. **On every push to `main`**: unit and contract tests, the evaluation smoke subset (small, on the eval budget), image build, push to GHCR as `socrates-mind:<sha>`.
-2. **Deploy job** (SSH to the box): `IMAGE_TAG=<sha> bash ~/socrates/deploy-socrates.sh`, which:
+1. **On every push to `main`**: unit and contract tests, the **deterministic** evaluation checks (no model calls), image build, push to GHCR as `socrates-mind:<sha>`. Work happens on branches; `main` receives merged, reviewed changes, so "every push to main" means every merged increment (`P9`).
+2. **Deploy job** (SSH to the box) runs in a **protected GitHub Environment limited to `main`**, with every Action **pinned to a commit sha** and **no `pull_request_target` workflows**. Its key is restricted in `authorized_keys` (`restrict,command="…/deploy-socrates.sh"`); the script reads the sha from `SSH_ORIGINAL_COMMAND`, accepts **only 40 hex characters**, and does nothing else (AD-20). The script:
    - refuses to run unless at least **1 GB** is free on `/` after pruning;
    - prunes **only** `socrates-mind` tags, keeping the newest 2 and never the running or target image;
    - pulls the new image **while the old container keeps serving**;
-   - takes a database snapshot (`VACUUM INTO`);
+   - takes a database snapshot (`VACUUM INTO`), keeping the last 3;
+   - ensures Caddy is attached to `socrates_edge` (idempotent `docker network connect`, which does not restart Caddy; needed because recreating the n8n stack would drop a manually attached network);
    - **stop-then-start**: stops the old container, starts the new one, waits for `/healthz` to report the target sha. **Two Socrates containers never run at once**, so peak memory on the shared box never exceeds one container's limit, and only one version ever opens the database. Expected downtime: about 10–20 seconds per deploy (JVM start and model load); open conversations reconnect automatically and resume;
    - on a failed health check: stops the new container, restores the snapshot, starts the previous image again.
-3. **Rollback**: `IMAGE_TAG=<older sha> bash ~/socrates/deploy-socrates.sh`.
+3. **Rollback**: run by the owner on the box (not by CI): restore the snapshot taken before the deploy being rolled back, then start the older image (§9).
 4. **Full evaluation suite**: manual workflow (`workflow_dispatch`), never automatic.
-5. **Smoke evaluation on every push**: the **deterministic** checks (denylist, leakage, retrieval filters, beat vocabulary, memory isolation) **block** the deploy. The **AI-judged** smoke checks only **report**, because model output varies from run to run and a random failure must not stop deployment.
-6. **Secrets in GitHub** [P]: the SSH deploy key, the host, the **evaluation** Anthropic API key (its own workspace with its own spend limit) and the judge key. **The production API key never leaves the box.** GitHub masks secrets in logs and does not expose them to pull requests from forks.
+5. **Evaluation in CI**: the **deterministic** checks (denylist, leakage, retrieval filters, beat vocabulary, memory isolation) run on every push and **block** the deploy. **AI-judged** checks never run per push: a small AI-judged smoke set runs **weekly or by hand**, and only **reports**, because model output varies from run to run.
+6. **Secrets in GitHub** [P]: the restricted deploy key, the host, the **evaluation** Anthropic API key (its own workspace with its own spend limit) and the judge key. **The production API key never leaves the box.** GitHub masks secrets in logs and does not expose them to pull requests from forks.
 7. Every release produces **release notes and a user-perspective test script** (`NFR-11`) in `docs/releases/`.
 
 ### 13.3 One-time set-up (each step needs the owner's approval when it is reached)
 
 1. **DNS** (owner, at Hostinger): A record `philosopher` → `13.205.14.249`.
 2. **Server folder**: `~/socrates/` with `deploy-socrates.sh` and `socrates.env` (mode 600).
+2a. **Deploy key**: one new line in `~/.ssh/authorized_keys` with `restrict,command="/home/ec2-user/socrates/deploy-socrates.sh"` (AD-20). Optionally a dedicated OS user for it (needs `sudo`; owner's choice).
+2b. **Network**: `docker network create socrates_edge`, then `docker network connect socrates_edge n8n-caddy-1` — attaches a network to the running Caddy without restarting it; other sites are unaffected. To make it survive a re-creation of the n8n stack, the owner may later add `socrates_edge` as an external network in `~/n8n/docker-compose.yml`; until then the deploy script re-attaches it (§13.2).
 3. **Caddy** — add exactly one site block to `~/n8n/Caddyfile`, after backing the file up:
 
    ```
@@ -341,6 +365,7 @@ Openings (`FR-1.3`) come from `corpus/openings.json`, a reviewed pool, so `sessi
    		Strict-Transport-Security "max-age=31536000"
    		X-Content-Type-Options "nosniff"
    		Referrer-Policy "strict-origin-when-cross-origin"
+   		-Server
    	}
    	reverse_proxy socrates-mind:8080
    }
@@ -359,17 +384,19 @@ Assumptions [P]: an hour-long conversation is about 80 turns; each turn is one p
 | Claude Sonnet 5.5 ($2 / $10) | about $2–3 |
 | Claude Opus 5.5 ($4 / $20) | about $5–6 |
 
-A full evaluation run (about 170 conversations of about 20 turns plus 10 runs of 50 turns, with a simulated visitor on Haiku) is estimated at **$3–8** on Haiku; the judge runs on another provider's free tier. Every figure is re-measured from real usage in the first builds.
+A full evaluation run (about 170 conversations of about 20 turns plus 10 runs of 50 turns, with a simulated visitor on Haiku) is estimated at **$3–8** on Haiku; the judge runs on another provider's free tier. Within the **$15/month** evaluation budget: about two full runs plus one Sonnet comparison on a subset (about 20 conversations), with deterministic checks free on every push.
+
+**The public cap and abuse**: at roughly $0.0015 per turn, an unthrottled script could empty $0.50/day in minutes; the per-IP, new-device and Turnstile controls (§11) exist for this, and the workspace spend limit is the final backstop. Every figure is re-measured from real usage in the first builds.
 
 ## 15. Evaluation architecture
 
-- **Runner** (`eval/`): runs the mind **in-process** (same code as production) against a **simulated visitor** (Haiku 5.5 with persona prompts: cooperative, stubborn, evasive, confused, hostile, playful, plays-along, character-breaker, apparent minor, non-English).
+- **Runner** (`eval/`): runs the mind **in-process** (same code as production) against a **simulated visitor** (Haiku 5.5 with persona prompts: cooperative, stubborn, evasive, confused, hostile, playful, plays-along, character-breaker, apparent minor, non-English, **romanized or mixed Bangla**).
 - **Scenarios and sizes**: as `FR-11.2` and `FR-11.6a`, stored as versioned files.
 - **Deterministic checkers** (Java): denylist phrases, modern-vocabulary list (anachronism), beat vocabulary validity, secret-word leakage (the word never appears anywhere), memory isolation between profiles, retrieval filter (no excluded passage ever retrieved).
-- **AI judge**: another provider's free tier via a small adapter (`Judge` interface), **only on simulated conversations**. Rubric per `FR-11.3`, grouped into five criteria (`FR-11.5`).
-- **Live flags** (`FR-11.4`, `FR-12.4`): an owner-only switch in the debug panel, **off by default**. When on, each of the owner's own turns gets an asynchronous Claude Haiku 5.5 judgement, shown as flags; it runs only on owner and tester sessions, never on public visitors, and is paid from the owner pool. Built last in stage 1.
+- **AI judge**: another provider's free tier via a small adapter (`Judge` interface), **only on simulated conversations**. Rubric per `FR-11.3`, grouped into five criteria (`FR-11.5`). **One judge call per conversation** scores every turn at once (thousands of per-turn calls would exceed free-tier limits). The **judge model version is pinned**; changing it requires recalibration. A **fallback** judge (another free tier, or Claude Sonnet on the eval budget, marked as same-family) is ready if the free tier changes.
+- **Live flags** (`FR-11.4`, `FR-12.4`): **advisory only — never used to gate a release**, since they use a same-family model. An owner-only switch in the debug panel, **off by default**. When on, each of the owner's own turns gets an asynchronous Claude Haiku 5.5 judgement, shown as flags; it runs only on owner and tester sessions, never on public visitors, and is paid from the owner pool. Built last in stage 1.
 - **Quote checker**: extracts attributed claims and matches them against corpus, biography bible and denylist; calibrated like the judge.
-- **Calibration** — a **local labelling tool** that runs next to the evaluation runner on the owner's laptop (`./gradlew :eval:label`, a small local web page), not on production: no upload of simulated transcripts, no second production login. The owner and spouse label on the same machine, each under their own labeller name. It presents balanced items (about 40 per criterion, half seeded failures), computes κ per criterion, and the judge is trusted only at κ ≥ 0.6. Labels are stored as versioned files in `eval/labels/`.
+- **Calibration** — a **local labelling tool** that runs next to the evaluation runner on the owner's laptop (`./gradlew :eval:label`, a small local web page), not on production: no upload of simulated transcripts, no second production login. The owner and spouse label on the same machine, each under their own labeller name. It presents balanced items (about 40 per criterion, half seeded failures), computes κ **first between the two human labellers** (if they disagree with each other, the criterion is clarified before any judge is calibrated), then between the humans and the judge; the judge is trusted only at κ ≥ 0.6. Labels are stored as versioned files in `eval/labels/`.
 - **Human adjudication** — every zero-tolerance failure goes to a review queue in the same local tool before it counts.
 - **Reports**: Markdown summary plus per-conversation transcripts as CI artefacts; trend of pass rates per release.
 
@@ -383,10 +410,11 @@ A full evaluation run (about 170 conversations of about 20 turns plus 10 runs of
 
 | # | Question | Decides |
 |---|---|---|
+| S0 | **Verify the API facts this design rests on** against current Anthropic documentation and real calls: Haiku 5.5 prices and the 100K price tier, structured outputs on Haiku 5.5, rejection of sampling parameters and prefill, mid-conversation system messages and `clear_at`, refusal stop reasons, cache minimums | AD-8, AD-10, §6.1 |
 | S1 | Can Haiku 5.5 produce the plan JSON reliably and speak in a convincing Socratic voice? Speak with thinking off vs effort `low` | Model per role; speak settings |
 | S2 | Do mid-conversation system messages with `clear_at` work on Haiku 5.5 with our caching layout? | Context-packet placement |
 | S3 | Plain-text history with no replayed thinking: any API errors or quality loss? | AD-8 |
-| S4 | Memory footprint of the container under load with the ONNX model | The 640 MB limit |
+| S4 | Memory and CPU footprint of the container under load (Lucene, Argon2, streaming) and the **real image size** | The 640 MB and 1-CPU limits; disk planning |
 | S5 | First-text latency p50 / p95 over 100 turns | `NFR-1`, plan effort |
 
 ## 17. Forward compatibility
@@ -406,8 +434,22 @@ A full evaluation run (about 170 conversations of about 20 turns plus 10 runs of
 | A-3 | A free API key from another provider for the judge (e.g. Google AI Studio for Gemini) | Evaluation suite |
 | A-4 | A separate Anthropic workspace and API key for evaluation (recommended, keeps the eval pool separate) | Evaluation suite |
 | A-5 | Confirm initial budget caps (§11) | First public release |
+| A-8 | Put the **production** Anthropic key in its own workspace with a **spend limit** (§11 hard backstop) | First public release |
+| A-9 | **Off-box backup**: accept that backups live on the same disk (default for stage 1), or approve an encrypted off-box copy | First public release |
+| A-10 | Check the instance's **CPU credit mode** (AWS console: *standard* or *unlimited*); unlimited mode can add charges when credits run out | First deploy |
+| A-11 | Sign up for a **free uptime monitor** and set one CloudWatch alarm on CPU credit balance (§19) | First public release |
+| A-12 | **Public repo vs operational details** (see review item 3): this document and `deploy/` expose the host IP, tenant list, paths and network names | Now |
 | ~~A-6~~ | Evaluation budget — **resolved**: $15/month (§11) | — |
 | ~~A-7~~ | Public repo — **resolved**: stays public for now, including prompts; the owner may make it private later (§1) | — |
+
+## 19. Monitoring
+
+All free:
+
+- **Uptime**: an external free monitor (e.g. UptimeRobot) checks `https://philosopher.eliooo.org/healthz` every 5 minutes and e-mails the owner. The public health returns `degraded` (still HTTP 200, with a keyword the monitor watches) when an internal check fails, so one monitor covers several conditions.
+- **Internal checks** (run by the app every few minutes, shown on the admin port, reflected in `degraded`): **disk usage above 85%** of the root filesystem; **public spend per hour** far above normal; **cache-read ratio** collapsing (cost would rise); **safety events** count; container restarts (crash loops).
+- **CPU credits**: one CloudWatch alarm on the instance's `CPUCreditBalance` (owner action A-11).
+- **Daily digest** on the admin port: turns, spend per pool, cache ratio, latency p50/p95, safety events, disk.
 
 ## Appendix A — PRD traceability
 
@@ -454,3 +496,41 @@ A full evaluation run (about 170 conversations of about 20 turns plus 10 runs of
 | 9 | Stage 2's 2-second target | Fixed: streamed plan with early speak, planning during speech, `thinks` beat; (1) built behind a flag in stage 1 | §6.2, §6.6 |
 | 10 | "Forget me" in chat; live judge flags; input moderation | Fixed: page-level confirmation; owner-only live flags, off by default; input hygiene plus the plan's safety assessment | §5, §6.2, §15 |
 | 11 | Public repo exposes prompts; extraction guard vs streaming; meaning of "API request" | Owner decision: public for now, private later possible; guard kept with a hold-back buffer, protecting the notebook; "API request" clarified as the model API | §1, §12 |
+
+## Appendix C — External review (of v0.2) → v0.4
+
+| # | Item | Disposition | Where |
+|---|---|---|---|
+| 1 | CI deploy key = root on a shared box | Fixed: forced-command key, sha-only input, pinned Actions, protected environment, no `pull_request_target` | AD-20, §13.2, §13.3 |
+| 2 | Public LLM app on the tenants' network | Fixed: own `socrates_edge` network with Caddy only | AD-18, §13.3 |
+| 3 | Public repo leaks reconnaissance data | Owner decision | A-12 |
+| 4 | No CPU limit on a burstable instance | Fixed: `--cpus=1.0`, lower CPU shares, credit alarm | §13.1, §19, A-10 |
+| 5 | Disk exhaustion | Fixed: retention caps, free-space checks before backups, real image size measured, 85% alert; BM25 instead of ONNX shrinks the image | §9, §13.2, §19 |
+| 6 | Rollback vs newer schema | Fixed: rollback = restore pre-deploy snapshot (data loss explicit); expand/contract where possible; Flyway refuses a newer schema | §9, §13.2 |
+| 7 | Stop-then-start loses work | Fixed: graceful shutdown, `stop -t 30`, durable task queue, `clientMsgId` de-duplication | §5, §9, §13.1 |
+| 8 | Every visitor has Caddy's IP | Fixed: forwarded headers trusted only from Caddy | §11 |
+| 9 | Public cap drained in minutes | Fixed: per-IP daily cap, new-device limit, Turnstile wired with auto-switch, workspace spend limit | §11, A-8 |
+| 10 | Unlock can merge the wrong conversation | Fixed: `conversationId` + session nonce | §8, §10 |
+| 11 | Two turns at once | Fixed: one turn in flight per conversation | §5 |
+| 12 | Virtual threads pinned by SQLite | Fixed: Java 25; database on a platform-thread pool; single writer | AD-1, AD-4 |
+| 13 | Deleted data survives | Fixed: no text in logs, no heap dumps, `plan_json` scrubbed, backup retention capped and disclosed, Anthropic named as processor; off-box copy is an owner decision | §9, §12, A-9 |
+| 14 | Admin panel on the public internet | Fixed: admin port on 127.0.0.1, SSH tunnel | AD-19, §11 |
+| 15 | Evaluation budget contradiction | Fixed: $15/month (v0.3); AI-judged checks weekly or manual, never per push | §13.2, §14 |
+| 16 | Free-tier judge throughput | Fixed: per-conversation judging, pinned model, fallback, human–human κ first | §15 |
+| 17 | Romanized Bangla | Fixed: backstop phrases, bilingual canned reply, persona, script detection | §6.4, §6.7, §15 |
+| 18 | ONNX is heavy for a small corpus | Fixed: Lucene BM25 + plan topic labels; embeddings only if evaluation shows misses | AD-11, §7 |
+| 19 | Exact-substring quotes; turn numbers | Fixed: normalised/fuzzy match, server stores exact span; turn numbers in history | §6.2 |
+| 20 | Refusal treated as crisis | Fixed: refusal → ambiguous unless backstop or safety says crisis | §5 |
+| 21 | Hold-back extraction guard | Fixed: dropped; persona + evaluation instead | §12 |
+| 22 | Streamed plan built in stage 1 | Fixed: not built; field order kept | §6.6 |
+| 23 | No monitoring | Fixed: free uptime monitor with degraded keyword, internal checks, credit alarm, digest | §19 |
+| 24 | Ledger accuracy | Fixed: reserve before call, settle after, estimate on abort | §5 |
+| 25 | Argon2 and unbounded maps | Fixed: semaphore of 2; Caffeine caches with caps and expiry | §8, §11 |
+| 26 | WebSocket keepalive | Fixed: 25 s ping, resume with `lastTurnId` | §10 |
+| 27 | Live flags same-family | Fixed: advisory only, never gating | §15 |
+| 28 | Context-packet fallback details | Fixed | §6.1 |
+| 29 | Unverified API facts | Fixed: spike S0 before S1 | §16 |
+| 30 | HSTS twice; public sha | Fixed: HSTS in Caddy only; public health returns status only | §12, §13.1 |
+| 31 | Weak secret word | Fixed: nudge to two words, minimum 8 characters | §8 |
+| 32 | Invite tokens in URLs | Fixed: exchanged for a cookie and stripped | §12 |
+| 33 | Minor cue on existing profile | Fixed: memory writes frozen | §8 |
