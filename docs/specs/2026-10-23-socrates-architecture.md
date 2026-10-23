@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Version** | 1.0 (approved) |
+| **Version** | 1.1 (approved v1.0 plus amendments from the development-plan review — Appendix E) |
 | **Date** | 2026-10-23 |
 | **Implements** | [PRD v1.0](2026-10-22-socrates-prd.md) — stage 1 in full; forward-compatible with stages 2–5 |
 | **Product owner** | Tanvir |
@@ -296,7 +296,8 @@ Every **text** frame is JSON: `{"v": 1, "type": "...", ...}`. Within v1, changes
 | S→C | `socrates.delta` | `{ turnId, text }` |
 | S→C | `socrates.beat` | `{ turnId, at, mood?, action?, tension? }` |
 | S→C | `socrates.done` | `{ turnId }` |
-| S→C | `socrates.notice` | `{ kind: "cap_daily" \| "cap_monthly" \| "rate_limited" \| "too_long" \| "error", text }` |
+| S→C | `socrates.notice` | `{ kind: "cap_daily" \| "cap_monthly" \| "rate_limited" \| "too_long" \| "busy" \| "error" \| "not_stored" \| "conversation_lost", text }` |
+| S→C | `care.reply` | `{ turnId, clientMsgId, text }` — a care or check-in message, rendered visibly differently from Socrates |
 | S→C | `safety.resources` | `{ resources: [{ name, url, phone?, region }] }` |
 | S→C | `memory.status` | `{ consented, unlocked, profileLabel?, recognitionLine? }` |
 | S→C | `memory.forget_prompt` | `{}` — the page shows the "Forget me" confirmation (`requests.forgetMe`) |
@@ -361,7 +362,7 @@ Openings (`FR-1.3`) come from `corpus/openings.json`, a reviewed pool, so `sessi
    - on a failed health check: stops the new container, restores the snapshot, starts the previous image again.
 3. **Rollback**: run by the owner on the box (not by CI): restore the snapshot taken before the deploy being rolled back, then start the older image (§9).
 4. **Full evaluation suite**: manual workflow (`workflow_dispatch`), never automatic.
-5. **Evaluation in CI**: the **deterministic** checks (denylist, leakage, retrieval filters, beat vocabulary, memory isolation) run on every push and **block** the deploy. **AI-judged** checks never run per push: a small AI-judged smoke set runs **weekly or by hand**, and only **reports**, because model output varies from run to run.
+5. **Evaluation in CI**: the **deterministic** checks (denylist, leakage, retrieval filters, beat vocabulary, memory isolation) run on every push and **block** the deploy. Model-based checks run on a push **only when the path gate in item 1 applies** (then they block); otherwise a small AI-judged set runs **weekly or by hand** and only **reports**, because model output varies from run to run.
 6. **Secrets in GitHub** [P]: the restricted deploy key, the host, the **evaluation** Anthropic API key (its own workspace with its own spend limit) and the judge key. **The production API key never leaves the box.** GitHub masks secrets in logs and does not expose them to pull requests from forks.
 7. Every release produces **release notes and a user-perspective test script** (`NFR-11`) in `docs/releases/`.
 
@@ -456,6 +457,7 @@ A full evaluation run (about 170 conversations of about 20 turns plus 10 runs of
 | A-10 | Check the instance's **CPU credit mode** (AWS console: *standard* or *unlimited*); unlimited mode can add charges when credits run out | First deploy |
 | A-11 | Sign up for a **free uptime monitor** and set one CloudWatch alarm on CPU credit balance (§19) | First deploy (release 0) |
 | A-13 | Approve the **metadata-service block** rule on the host firewall (§13.3 step 2c) | First deploy (release 0) |
+| A-14 | A separate **development workspace** key for the laptop (S0, live tests, local runs), with a small spend limit (Appendix E-9) | Release 0, Task 2 |
 | ~~A-12~~ | Public repo vs operational details — **resolved**: the repo stays public; operational specifics live in a private file outside the repo and public documents use placeholders. Details published in earlier commits remain in the history (accepted) | — |
 | ~~A-6~~ | Evaluation budget — **resolved**: $15/month (§11) | — |
 | ~~A-7~~ | Public repo — **resolved**: stays public for now, including prompts; the owner may make it private later (§1) | — |
@@ -581,3 +583,21 @@ All free:
 | 22 | CSP blocks Turnstile | Fixed: Cloudflare origin allowed; named in the notice | §12 |
 | 23 | Two calls per turn | Kept, with a documented single-call fallback if S5 misses p95 | AD-7 |
 | 24 | Server-side enforcement | Fixed: notice and minors-consent enforced by the server | §8 |
+
+## Appendix E — Amendments from the development-plan review (v1.0 → v1.1)
+
+These amendments come from the review of the stage 1 roadmap and the Release 0 plan. Where this appendix and an earlier section disagree, this appendix wins.
+
+| # | Amendment | Replaces / refines |
+|---|---|---|
+| E-1 | **Safety classifier on every message from R0.** A short Haiku call classifies each message (none / ambiguous / crisis, language, script), concurrently with the speak call, whose text is buffered until the verdict. Crisis → sticky care mode; ambiguous → plain check-in. From R1b the plan's `safety` field takes over the role in the normal path; the standalone classifier remains on the capped path (§5 step 3). The crisis backstop still runs first, on the full text, before every other gate | §5 steps 2–3 |
+| E-2 | **Sticky care mode from R0**: once a conversation is in care mode, later messages get the care reply until the visitor starts a new conversation | §5, §6.4 |
+| E-3 | **Device tokens are signed, not stored, until R4**: `<random>.<HMAC-SHA256(secret, random)>`, validated on every use; the server keeps no device table before profiles exist | §8 device token |
+| E-4 | **Management port binds to all interfaces inside the container**; the host publishes it on `127.0.0.1` only | §13.1 Network |
+| E-5 | **Snapshots** are taken through a management endpoint that runs `VACUUM INTO` over the app's own connection; **restores** run a one-off container from the previous image against the data volume | §9, §13.2 |
+| E-6 | **`socrates_edge` has a fixed subnet**, chosen at set-up so it overlaps neither the VPC nor other Docker networks; the deploy script refuses to run if the network's subnet differs or the metadata-block rule is missing | §13.2, §13.3 |
+| E-7 | **Deploy trigger guards**: deploy `workflow_run.head_sha`; only for `push` events on `main` from this repository; one deploy at a time (`concurrency` plus a file lock) | §13.2 |
+| E-8 | **R0 deviation**: until Turnstile arrives (R5), IP limits are loose (120/minute, 2,000/day, 30 new devices/hour) and **block** with a notice instead of challenging | §11 |
+| E-9 | **Keys**: development and live tests use a separate **development workspace** key; the production key never leaves the box (owner action A-14) | §13.2 item 6 |
+| E-10 | **Model timeouts** (first token 20 s, idle 30 s, total 90 s); reservations sized from the request, expiring after 5 minutes and released at start-up; R0 requests stay under about 30K input tokens by dropping the oldest turns | §5, §11 |
+| E-11 | **Reconnect**: a resent `clientMsgId` replays the reply to the new socket (or attaches it to the stream in progress); `hello` carries `resumeConversationId` and `lastTurnId` | §10 |
