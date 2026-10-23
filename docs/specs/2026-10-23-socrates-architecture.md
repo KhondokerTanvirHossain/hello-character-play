@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Version** | 0.4 (draft for validation; external review of v0.2 incorporated — see Appendix C) |
+| **Version** | 0.5 (draft for validation; external review incorporated, operational details redacted — see Appendix C) |
 | **Date** | 2026-10-23 |
 | **Implements** | [PRD v1.0](2026-10-22-socrates-prd.md) — stage 1 in full; forward-compatible with stages 2–5 |
 | **Product owner** | Tanvir |
@@ -13,7 +13,7 @@
 
 Tags as in the PRD: **[D]** decided by the owner, **[P]** proposed by Claude and open to challenge, **[O]** open. Decisions are numbered `AD-n` (architecture decisions). Requirement references (`FR-`, `NFR-`, `AC-`) point to the PRD. Appendix A traces every PRD requirement to the component that implements it.
 
-Facts about the server come from a read-only inspection on 2026-10-23. Model facts and prices come from Anthropic's published model table (cached 2026-10-06) and must be re-checked at build time.
+Facts about the server come from a read-only inspection on 2026-10-23. **Operational specifics** (host address, the other tenants, file paths, container and network names, DNS provider) are kept in a **private operations file outside this public repository** (A-12); this document uses placeholders such as `<host>`, `<deploy dir>`, `<proxy container>` and "the tenants' network". Model facts and prices come from Anthropic's published model table (cached 2026-10-06) and must be re-checked at build time.
 
 ---
 
@@ -21,10 +21,10 @@ Facts about the server come from a read-only inspection on 2026-10-23. Model fac
 
 | Constraint | Source | Consequence |
 |---|---|---|
-| Shared **t3.medium** (2 vCPU, 3.7 GB RAM, about 1.4 GB free, **no swap**), 20 GB disk with about 4.9 GB free | Server inspection | One small container with a **hard memory limit**; no extra database server; strict disk hygiene |
+| Shared **burstable t3-class instance** (2 vCPU, 3.7 GB RAM, about 1.4 GB free, **no swap**), 20 GB disk with about 4.9 GB free | Server inspection | One small container with a **hard memory limit**; no extra database server; strict disk hygiene |
 | **More capacity is available on request**: the owner will add memory or move Socrates to another EC2 instance if needed | Owner [D] | Memory limits protect the other tenants, not a ceiling on the product. The deployment is **portable**: the instance, Docker network, and reverse-proxy wiring are configuration, so moving to a new instance means a new target, not a redesign |
-| Live tenants on the box (medscribe-ai, medioo-web, bddrug, n8n, healthbuddy) that **must never be harmed** | Owner [D] | Socrates is fully isolated: own image, own deploy script, own data volume, no host ports, prunes only its own images; the only shared touch-point is one new Caddy site block, applied with the owner's approval |
-| Shared **Caddy** owns 80/443 and reaches the other apps by container name on network `n8n_edge` | Server inspection | Caddy is also attached to Socrates' own network `socrates_edge` (AD-18) and reaches it as `socrates-mind:8080` |
+| Live tenants on the box (several production web apps, their databases, and an automation service; inventory in the private operations file) that **must never be harmed** | Owner [D] | Socrates is fully isolated: own image, own deploy script, own data volume, no host ports, prunes only its own images; the only shared touch-point is one new Caddy site block, applied with the owner's approval |
+| Shared **Caddy** owns 80/443 and reaches the other apps by container name on the tenants' network | Server inspection | Caddy is also attached to Socrates' own network `socrates_edge` (AD-18) and reaches it as `socrates-mind:8080` |
 | Existing deploy pattern: GitHub Actions → GHCR image tagged with git sha → SSH → deploy script with health probe | Server inspection | Socrates mirrors it exactly |
 | Public GitHub repo: free Actions minutes, **public CI logs**. The repo **stays public for now**, including persona prompts and evaluation material; the owner may make it private later [D] | GitHub, owner | Nothing secret or tenant-specific is ever printed in CI. Nothing in the build or deploy assumes the repo is public, so making it private later is only a settings change (private repos get 2,000 free Actions minutes a month, enough for this project) |
 | Public from day zero; testable by the owner on the live site | PRD `P9`, `NFR-11` | Continuous deployment of every green build to `https://philosopher.eliooo.org` |
@@ -36,9 +36,9 @@ Facts about the server come from a read-only inspection on 2026-10-23. Model fac
 ## 2. System overview
 
 ```
- Visitor's browser                         Shared EC2 box (t3.medium)
+ Visitor's browser                         Shared EC2 box (t3)      
  ┌──────────────────────┐        ┌─────────────────────────────────────────────────────────────┐
- │ Chat client (TS)     │ HTTPS  │  Caddy (shared, n8n-caddy-1)                                │
+ │ Chat client (TS)     │ HTTPS  │  Caddy (shared)                                             │
  │ - transcript, input  │◄──────►│   philosopher.eliooo.org ──► socrates-mind:8080 (net: socrates_edge) │
  │ - memory controls    │  WSS   │                                                             │
  │ - debug panel (owner)│        │  ┌───────────────────── socrates-mind (one container) ───┐  │
@@ -81,8 +81,8 @@ Facts about the server come from a read-only inspection on 2026-10-23. Model fac
 | AD-14 | **Budget ledger in SQLite** with three pools; checked before every model call | `NFR-3` | [P] |
 | AD-15 | **Evaluation runs off the box** (GitHub Actions on manual trigger, or the owner's laptop) | Memory and safety of the shared box; evaluation spend separated | [P] |
 | AD-16 | **Chat client in plain TypeScript + Vite**, no UI framework; built into the server's static resources | Smallest possible thing that works; stage 3's world is a separate client on the same protocol | [P] |
-| AD-17 | **Deployment mirrors medscribe's pattern** but is entirely separate: `ghcr.io/khondokertanvirhossain/hello-character-play/socrates-mind:<sha>`, `~/socrates/deploy-socrates.sh` | Proven on this box; nothing shared except Caddy | [P] |
-| AD-18 | **Own Docker network `socrates_edge`**, shared only by Caddy and `socrates-mind`; Socrates is **not** on `n8n_edge` | A compromised Socrates (or a malicious image) cannot reach n8n, medscribe or bddrug directly | [P] |
+| AD-17 | **Deployment mirrors the box's existing deploy pattern** but is entirely separate: `ghcr.io/khondokertanvirhossain/hello-character-play/socrates-mind:<sha>`, `<deploy dir>/deploy-socrates.sh` | Proven on this box; nothing shared except Caddy | [P] |
+| AD-18 | **Own Docker network `socrates_edge`**, shared only by Caddy and `socrates-mind`; Socrates is **not** on the tenants' network | A compromised Socrates (or a malicious image) cannot reach the other tenants directly | [P] |
 | AD-19 | **Admin and debug on a separate port (8081) bound to the box's 127.0.0.1 only**, reached by the owner through an SSH tunnel; never routed by Caddy | The panel can read every visitor's transcript; it must not be on the public internet behind a single password | [P] |
 | AD-20 | **CI can run exactly one command on the box**: a deploy key restricted in `authorized_keys` to `deploy-socrates.sh`, which accepts only a 40-character hex sha | SSH plus Docker is effectively root on a box holding other tenants' health data and credentials; a compromised Action or dependency in a public repo must not inherit that | [P] |
 
@@ -314,7 +314,7 @@ Openings (`FR-1.3`) come from `corpus/openings.json`, a reviewed pool, so `sessi
 - `/healthz` on the public port returns only `{ status }`; the build sha and details are on the admin port and to the deploy script.
 - **Invite tokens** are exchanged for a cookie on first use and stripped from the URL, so they never sit in logs or referrers.
 - "Never reaches any API request" in `FR-4.3` means **the model API**: the secret word does travel, over HTTPS, in the page's own REST request to our server, and nowhere else.
-- Secrets on the box in `~/socrates/socrates.env` (mode 600), the same convention as medscribe; CI never prints environment values.
+- Secrets on the box in `<deploy dir>/socrates.env` (mode 600), the box's existing convention; CI never prints environment values.
 - **Privacy notice** names Anthropic as the processor of conversation text and states backup retention (§9).
 
 ## 13. Deployment
@@ -341,7 +341,7 @@ Openings (`FR-1.3`) come from `corpus/openings.json`, a reviewed pool, so `sessi
    - prunes **only** `socrates-mind` tags, keeping the newest 2 and never the running or target image;
    - pulls the new image **while the old container keeps serving**;
    - takes a database snapshot (`VACUUM INTO`), keeping the last 3;
-   - ensures Caddy is attached to `socrates_edge` (idempotent `docker network connect`, which does not restart Caddy; needed because recreating the n8n stack would drop a manually attached network);
+   - ensures Caddy is attached to `socrates_edge` (idempotent `docker network connect`, which does not restart Caddy; needed because recreating the proxy's compose stack would drop a manually attached network);
    - **stop-then-start**: stops the old container, starts the new one, waits for `/healthz` to report the target sha. **Two Socrates containers never run at once**, so peak memory on the shared box never exceeds one container's limit, and only one version ever opens the database. Expected downtime: about 10–20 seconds per deploy (JVM start and model load); open conversations reconnect automatically and resume;
    - on a failed health check: stops the new container, restores the snapshot, starts the previous image again.
 3. **Rollback**: run by the owner on the box (not by CI): restore the snapshot taken before the deploy being rolled back, then start the older image (§9).
@@ -352,11 +352,11 @@ Openings (`FR-1.3`) come from `corpus/openings.json`, a reviewed pool, so `sessi
 
 ### 13.3 One-time set-up (each step needs the owner's approval when it is reached)
 
-1. **DNS** (owner, at Hostinger): A record `philosopher` → `13.205.14.249`.
-2. **Server folder**: `~/socrates/` with `deploy-socrates.sh` and `socrates.env` (mode 600).
-2a. **Deploy key**: one new line in `~/.ssh/authorized_keys` with `restrict,command="/home/ec2-user/socrates/deploy-socrates.sh"` (AD-20). Optionally a dedicated OS user for it (needs `sudo`; owner's choice).
-2b. **Network**: `docker network create socrates_edge`, then `docker network connect socrates_edge n8n-caddy-1` — attaches a network to the running Caddy without restarting it; other sites are unaffected. To make it survive a re-creation of the n8n stack, the owner may later add `socrates_edge` as an external network in `~/n8n/docker-compose.yml`; until then the deploy script re-attaches it (§13.2).
-3. **Caddy** — add exactly one site block to `~/n8n/Caddyfile`, after backing the file up:
+1. **DNS** (owner, at the DNS provider): A record `philosopher` → the host's public IP.
+2. **Server folder**: `<deploy dir>` with `deploy-socrates.sh` and `socrates.env` (mode 600).
+2a. **Deploy key**: one new line in the deploy user's `authorized_keys` with `restrict,command="<deploy dir>/deploy-socrates.sh"` (AD-20). Optionally a dedicated OS user for it (needs `sudo`; owner's choice).
+2b. **Network**: `docker network create socrates_edge`, then `docker network connect socrates_edge <proxy container>` — attaches a network to the running Caddy without restarting it; other sites are unaffected. To make it survive a re-creation of the proxy's compose stack, the owner may later add `socrates_edge` as an external network in that compose file; until then the deploy script re-attaches it (§13.2).
+3. **Caddy** — add exactly one site block to the shared Caddyfile, after backing the file up:
 
    ```
    philosopher.eliooo.org {
@@ -371,7 +371,7 @@ Openings (`FR-1.3`) come from `corpus/openings.json`, a reviewed pool, so `sessi
    }
    ```
 
-   Then `caddy validate` inside the Caddy container, and only if valid, `caddy reload` (graceful: other sites are not interrupted). The medioo drift check compares only its own blocks, so it is unaffected. Caddy obtains the TLS certificate automatically once DNS resolves.
+   Then `caddy validate` inside the Caddy container, and only if valid, `caddy reload` (graceful: other sites are not interrupted). Another tenant's CI drift check compares only its own blocks, so it is unaffected. Caddy obtains the TLS certificate automatically once DNS resolves.
 4. **GitHub secrets**: deploy SSH key and host; GHCR uses the workflow token.
 
 ## 14. Cost model
@@ -429,7 +429,7 @@ A full evaluation run (about 170 conversations of about 20 turns plus 10 runs of
 
 | # | Item | Needed by |
 |---|---|---|
-| A-1 | Add the DNS A record `philosopher` → `13.205.14.249` at Hostinger | First deploy |
+| A-1 | Add the DNS A record `philosopher` → the host's public IP at the DNS provider | First deploy |
 | A-2 | Approve the one-time Caddy change (§13.3) when it is reached | First deploy |
 | A-3 | A free API key from another provider for the judge (e.g. Google AI Studio for Gemini) | Evaluation suite |
 | A-4 | A separate Anthropic workspace and API key for evaluation (recommended, keeps the eval pool separate) | Evaluation suite |
@@ -438,7 +438,7 @@ A full evaluation run (about 170 conversations of about 20 turns plus 10 runs of
 | A-9 | **Off-box backup**: accept that backups live on the same disk (default for stage 1), or approve an encrypted off-box copy | First public release |
 | A-10 | Check the instance's **CPU credit mode** (AWS console: *standard* or *unlimited*); unlimited mode can add charges when credits run out | First deploy |
 | A-11 | Sign up for a **free uptime monitor** and set one CloudWatch alarm on CPU credit balance (§19) | First public release |
-| A-12 | **Public repo vs operational details** (see review item 3): this document and `deploy/` expose the host IP, tenant list, paths and network names | Now |
+| ~~A-12~~ | Public repo vs operational details — **resolved**: the repo stays public; operational specifics live in a private file outside the repo and public documents use placeholders. Details published in earlier commits remain in the history (accepted) | — |
 | ~~A-6~~ | Evaluation budget — **resolved**: $15/month (§11) | — |
 | ~~A-7~~ | Public repo — **resolved**: stays public for now, including prompts; the owner may make it private later (§1) | — |
 
@@ -503,7 +503,7 @@ All free:
 |---|---|---|---|
 | 1 | CI deploy key = root on a shared box | Fixed: forced-command key, sha-only input, pinned Actions, protected environment, no `pull_request_target` | AD-20, §13.2, §13.3 |
 | 2 | Public LLM app on the tenants' network | Fixed: own `socrates_edge` network with Caddy only | AD-18, §13.3 |
-| 3 | Public repo leaks reconnaissance data | Owner decision | A-12 |
+| 3 | Public repo leaks reconnaissance data | Owner decision: keep public; specifics moved to a private operations file; placeholders in public docs; earlier history accepted | A-12 |
 | 4 | No CPU limit on a burstable instance | Fixed: `--cpus=1.0`, lower CPU shares, credit alarm | §13.1, §19, A-10 |
 | 5 | Disk exhaustion | Fixed: retention caps, free-space checks before backups, real image size measured, 85% alert; BM25 instead of ONNX shrinks the image | §9, §13.2, §19 |
 | 6 | Rollback vs newer schema | Fixed: rollback = restore pre-deploy snapshot (data loss explicit); expand/contract where possible; Flyway refuses a newer schema | §9, §13.2 |
