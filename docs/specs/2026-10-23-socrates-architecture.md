@@ -458,6 +458,7 @@ A full evaluation run (about 170 conversations of about 20 turns plus 10 runs of
 | A-11 | Sign up for a **free uptime monitor** and set one CloudWatch alarm on CPU credit balance (§19) | First deploy (release 0) |
 | A-13 | Approve the **metadata-service block** rule on the host firewall (§13.3 step 2c) | First deploy (release 0) |
 | A-14 | A separate **development workspace** key for the laptop (S0, live tests, local runs), with a small spend limit (Appendix E-9) | Release 0, Task 2 |
+| A-15 | Make the GHCR package **public** after its first publish (irreversible; the image contains nothing secret, per A-7) | Release 0, Task 14 |
 | ~~A-12~~ | Public repo vs operational details — **resolved**: the repo stays public; operational specifics live in a private file outside the repo and public documents use placeholders. Details published in earlier commits remain in the history (accepted) | — |
 | ~~A-6~~ | Evaluation budget — **resolved**: $15/month (§11) | — |
 | ~~A-7~~ | Public repo — **resolved**: stays public for now, including prompts; the owner may make it private later (§1) | — |
@@ -613,3 +614,12 @@ These amendments come from the review of the stage 1 roadmap and the Release 0 p
 | E-21 | **CPU**: `--cpus=0.3` provisionally (the whole box's sustained baseline is below one vCPU), revised from the S4 measurement | §13.1 |
 | E-22 | **Path-gated live safety smoke from R0**, using the eval workspace key (A-4 moved to R0) | §13.2 items 1, 5 |
 | E-23 | **Page disclosures**: a permanent static help line (independent of the socket and cookies) and a notice that messages are processed by Anthropic's Claude and not saved by the site | §12 |
+| E-24 | **Classify first (supersedes the concurrency in E-1 and the gate path in E-13)**: after the backstop and the care check, every message is classified **sequentially, before** any gate or the speak call; only a "safe" verdict reaches the gates and Socrates. Every classifier call is paid from the safety reserve (daily and monthly caps, per-device limit); when it cannot run, a fail-safe fallback decides (pending check-in or an affirmative answer to it → care; a distress cue → check-in) | E-1, E-13, §5 |
+| E-25 | **Thinking disabled** on every R0 model call (Haiku 5.5 thinks by default and thinking counts toward `max_tokens`) | §6.1 |
+| E-26 | **Pending check-in is kept per device** (24 h, no text) as well as per conversation; after two unclear answers the visitor is moved to care; a "no" restores the original question to Socrates' history | E-14 |
+| E-27 | **Speak-call refusal after a safe verdict** gets a plain "let us take up another question" notice, not a check-in (the classifier has already judged the message) | §5 failure table, Appendix C #20 |
+| E-28 | **Care text in other languages (revises E-20)**: R0 sends the canned care text in English or Bangla, and Bangla + English for any other language; the model-written line is deferred | E-20 |
+| E-29 | **Firewall details (refines E-16)**: a dedicated, flushed and re-appended chain in a fixed order (established → DNS to two public resolvers → private-range drops → new HTTPS only → drop); `--dns` set on the container; `--ip-range` keeps Docker's dynamic allocation away from Socrates' fixed IP; one root-owned config is the single source of the IP; a per-minute watch re-applies the rules and stops **only Socrates** if they cannot be restored | E-16 |
+| E-30 | **Deploys are digest-pinned and detached**: the deploy receives `sha + digest`, pulls by digest, refuses oversized images or extra volumes, runs detached from the SSH session, and checks host memory headroom; the container has `--oom-score-adj=1000` so it is killed before any tenant | §13.2 |
+| E-31 | **Safety smoke inside CI**: the path-gated live safety smoke is a job in `ci`, diffed against the last successfully deployed sha, and publishing depends on it | E-22 |
+

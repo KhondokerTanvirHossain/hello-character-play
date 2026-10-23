@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Version** | 0.3 (plan review and multi-agent verification incorporated) |
+| **Version** | 0.4 (two verification rounds incorporated) |
 | **Date** | 2026-10-23 |
 | **Implements** | [PRD v1.0](../specs/2026-10-22-socrates-prd.md), [Architecture v1.1](../specs/2026-10-23-socrates-architecture.md) |
 | **Status** | Awaiting validation |
@@ -25,7 +25,7 @@
 - Gradle multi-project with a packaged corpus; CI; hardened GHCR image; restricted, guarded deploy; one-time server set-up (owner-approved).
 - **Spike S0** (API facts) and a first **S4** footprint check.
 - Chat page → signed device cookie → WebSocket → one streamed Haiku 5.5 reply with persona v0 (which carries detection-independent safety rules).
-- **Layered, fail-safe safety**: crisis backstop (English, Bangla, romanized Bangla) first on every message; a Haiku classifier on every other message — including those stopped by a gate or a cap — covering all FR-10.1 categories and identification with his fate; check-in follow-through; sticky care per conversation and per device with a confirmed "return to Socrates" control; canned care, check-in and follow-up replies; safety reserve with daily and monthly caps; a permanent help line on the page.
+- **Layered, fail-safe safety, classify-first**: crisis backstop (English, Bangla, romanized Bangla) first on every message; then a Haiku classifier, sequentially, on every other message before any gate or reply — covering all FR-10.1 categories and identification with his fate, with fail-safe fallbacks; check-in follow-through; sticky care per conversation and per device with a confirmed "return to Socrates" control; canned care, check-in and follow-up replies; safety reserve with daily and monthly caps; a permanent help line on the page.
 - **Path-gated live safety smoke in CI** (eval key A-4) blocking deploys that change safety or persona material.
 - **Network isolation**: fixed container IP fenced by host firewall rules (no metadata service, no private networks, no tenant ports).
 - Budget ledger with daily and monthly caps; workspace spend limit; rate limits; `Origin` checks; trusted client IPs; one turn in flight; reconnect without loss. **No conversation storage.**
@@ -126,7 +126,7 @@
 
 | Release | Owner action |
 |---|---|
-| R0 | A-1 DNS record; A-5 confirm caps and safety reserve; A-8 production workspace + spend limit; A-10 CPU credit mode; A-11 uptime monitor and credit alarm; A-13 approve the host firewall rules; **A-14 development workspace key** for the laptop; **A-4 eval workspace key** (moved from R2, for the CI safety smoke); review the Bangla crisis phrases, distress cues and replies; approve each one-time server step |
+| R0 | A-1 DNS record; A-5 confirm caps and safety reserve; A-8 production workspace + spend limit; A-10 CPU credit mode; A-11 uptime monitor and credit alarm; A-13 approve the host firewall rules; **A-14 development workspace key** for the laptop; **A-4 eval workspace key** (moved from R2, for the CI safety smoke); **A-15 make the image package public**; review the Bangla crisis phrases, distress cues and replies; approve each one-time server step |
 | R1a | Invite your spouse; check deletion on the live site |
 | R1b | Start informal hour-long sessions |
 | R2 | A-3 judge key; first calibration round |
