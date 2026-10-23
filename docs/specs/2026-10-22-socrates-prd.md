@@ -2,11 +2,11 @@
 
 | | |
 |---|---|
-| **Version** | 0.5 (draft for validation; second external review incorporated) |
+| **Version** | 1.0 (approved) |
 | **Date** | 2026-10-23 |
 | **Product owner** | Tanvir |
 | **Drafted by** | Claude (from a discovery conversation with the product owner) |
-| **Status** | Awaiting final validation |
+| **Status** | **Approved** by the product owner on 2026-10-23 after two external review rounds |
 
 ### How to read this document
 
