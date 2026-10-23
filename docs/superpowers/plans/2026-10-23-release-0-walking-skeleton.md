@@ -315,7 +315,7 @@
   3. Deploy key: generate; add one `authorized_keys` line `restrict,command="<deploy dir>/deploy-socrates.sh" …`; store the private key and host as GitHub `production` environment secrets. Verify: `ssh <host> "uname"` with that key runs the deploy script (which rejects `uname` and exits 2).
   4. `docker network create socrates_edge`; `docker network connect socrates_edge <proxy container>`. Verify: other sites still answer.
   5. A-13: `DOCKER-USER` rule dropping traffic from the `socrates_edge` subnet to `169.254.169.254`, persisted across reboots. Verify: `docker run --rm --network socrates_edge curlimages/curl -m 3 http://169.254.169.254/` times out, while the host itself still reaches it.
-  6. Caddy: back up the shared Caddyfile; append the `philosopher.eliooo.org` block (Architecture §13.3); `caddy validate`; only if valid, `caddy reload`. Verify: all other sites answer; `curl -I https://philosopher.eliooo.org/healthz` → 200 once Socrates runs.
+  6. Caddy: back up the shared Caddyfile; append the `philosopher.eliooo.org` block (Architecture §13.3); `caddy validate`; only if valid, `caddy reload`. Verify: all other sites answer; `curl -I https://philosopher.eliooo.org/healthz` → 200 once Socrates runs. Also confirm the shared Caddyfile still has no `admin` directive, so the proxy's admin API stays on its own container's localhost (Architecture §13.1).
   7. A-10: owner checks the CPU credit mode; A-11: owner sets up the uptime monitor on `/healthz` and the CPU-credit alarm.
 - [ ] **Step 2: Write `deploy.yml`** and push to `main`.
 - [ ] **Step 3: Run the one-time set-up** with the owner, step by step.
